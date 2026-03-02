@@ -60,7 +60,6 @@ a = Analysis(
     binaries=[],
     datas=[
         (os.path.join(build_dir, 'config.json'), '.'),
-        (os.path.join(build_dir, 'files'), 'files'),
         (os.path.join(build_dir, 'WinHide.png'), '.'),
     ],
     hiddenimports=[

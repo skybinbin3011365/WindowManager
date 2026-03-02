@@ -412,41 +412,80 @@ class HotkeyManager:
         return True
 
     def _execute_callback_safely(self, callback: Callable, callback_name: str):
-        """安全执行回调函数
+        """安全执行回调函数（改进的线程安全版本）
 
         Args:
             callback: 回调函数
             callback_name: 回调名称（用于日志）
         """
-        # 在单独的线程中执行回调，避免阻塞热键检测
-        def execute_callback():
-            # 尝试使用线程安全的方式调用回调
-            try:
-                # 检查回调是否仍然有效
-                if not callable(callback):
-                    logger.warning("Callback %s is no longer callable", callback_name)
-                    return
+        # 直接在热键检测线程中使用Tkinter的after方法
+        # 这样可以确保回调在Tkinter主线程中执行，避免线程安全问题
+        try:
+            # 检查回调是否仍然有效
+            if not callable(callback):
+                logger.warning("Callback %s is no longer callable", callback_name)
+                return
 
-                # 检查是否有after方法（Tkinter widget）
-                if hasattr(callback, 'after'):
-                    # 检查窗口是否仍然存在
+            # 尝试获取Tkinter root对象
+            root = None
+            if hasattr(callback, '__self__'):
+                # 如果是绑定方法，尝试获取self的root
+                obj = callback.__self__
+                if hasattr(obj, 'root'):
+                    root = obj.root
+                elif hasattr(obj, 'winfo_exists'):
+                    # 可能本身就是Tkinter widget
                     try:
-                        callback.winfo_exists()
+                        if obj.winfo_exists():
+                            root = obj
                     except Exception:
-                        # TclError或其他异常，窗口可能已不存在
-                        logger.warning("Window for callback %s no longer exists", callback_name)
-                        return
-                    callback.after(0, callback)
-                else:
-                    # 直接调用
-                    callback()
-            except Exception as e:
-                logger.error("Error calling %s callback: %s", callback_name, str(e), exc_info=True)
-
-        threading.Thread(
-            target=execute_callback,
-            daemon=True
-        ).start()
+                        pass
+            
+            # 如果找到了root，使用after方法
+            if root and hasattr(root, 'after'):
+                try:
+                    # 检查root是否仍然存在
+                    if hasattr(root, 'winfo_exists'):
+                        if not root.winfo_exists():
+                            logger.warning("Root window for callback %s no longer exists", callback_name)
+                            return
+                    
+                    # 使用after确保在主线程执行
+                    root.after(0, callback)
+                    logger.debug("Scheduled %s callback via Tkinter after", callback_name)
+                    return
+                except Exception as e:
+                    logger.warning("Failed to use Tkinter after for %s: %s", callback_name, str(e))
+            
+            # 降级方案：在单独的线程中执行，但添加超时保护
+            logger.debug("Falling back to threaded execution for %s callback", callback_name)
+            
+            def execute_callback():
+                try:
+                    # 添加超时保护
+                    import threading
+                    callback_event = threading.Event()
+                    
+                    def wrapped_callback():
+                        try:
+                            callback()
+                        finally:
+                            callback_event.set()
+                    
+                    # 启动回调线程
+                    callback_thread = threading.Thread(target=wrapped_callback, daemon=True)
+                    callback_thread.start()
+                    
+                    # 等待最多5秒
+                    if not callback_event.wait(timeout=5.0):
+                        logger.warning("%s callback timed out after 5 seconds", callback_name)
+                except Exception as e:
+                    logger.error("Error calling %s callback: %s", callback_name, str(e), exc_info=True)
+            
+            threading.Thread(target=execute_callback, daemon=True).start()
+            
+        except Exception as e:
+            logger.error("Error in _execute_callback_safely for %s: %s", callback_name, str(e), exc_info=True)
 
     def _check_hide_hotkey(self, current_sequence: list) -> bool:
         """检查隐藏窗口热键

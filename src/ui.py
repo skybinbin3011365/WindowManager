@@ -8,6 +8,7 @@ import os
 import logging
 import threading
 import time
+import datetime
 from typing import Optional
 
 try:
@@ -126,6 +127,12 @@ class AppWindow:
         # 延迟30秒自动初始化时间校准选项卡
         self._init_time_sync_scheduled = False
         self.root.after(30000, self._auto_init_time_sync_tab)
+        
+        # 启动心跳检测和自动恢复机制
+        self._heartbeat_running = True
+        self._last_heartbeat_time = time.time()
+        self._heartbeat_check_interval = 60000  # 60秒检查一次
+        self._start_heartbeat()
 
     def _setup_hotkeys(self):
         """设置热键"""
@@ -276,6 +283,53 @@ class AppWindow:
                 self._time_sync_tab_initialized = True
         except Exception as e:
             logger.error("Error in auto_init_time_sync_tab: %s", str(e), exc_info=True)
+    
+    def _start_heartbeat(self):
+        """启动心跳检测"""
+        if not self._heartbeat_running:
+            return
+        
+        try:
+            self._heartbeat_check()
+        except Exception as e:
+            logger.error("Error in heartbeat: %s", str(e), exc_info=True)
+        
+        # 继续下一次心跳检测
+        if self._heartbeat_running and self.root and self.root.winfo_exists():
+            self.root.after(self._heartbeat_check_interval, self._start_heartbeat)
+    
+    def _heartbeat_check(self):
+        """执行心跳检测和自动恢复"""
+        try:
+            current_time = time.time()
+            self._last_heartbeat_time = current_time
+            
+            # 检查热键管理器是否还在运行
+            if self.hotkey_manager:
+                if not getattr(self.hotkey_manager, '_running', False):
+                    logger.warning("Hotkey manager is not running, attempting to restart...")
+                    try:
+                        self.hotkey_manager.start()
+                        logger.info("Hotkey manager restarted successfully")
+                    except Exception as e:
+                        logger.error("Failed to restart hotkey manager: %s", str(e), exc_info=True)
+            
+            # 检查托盘图标是否还在运行
+            if TRAY_AVAILABLE and self._tray_icon:
+                try:
+                    # 简单检查托盘图标对象是否还存在
+                    if not hasattr(self._tray_icon, '_running') or not self._tray_icon._running:
+                        logger.warning("Tray icon seems to be stopped, attempting to recreate...")
+                        self._tray_icon = None
+                        self._create_tray_icon()
+                        logger.info("Tray icon recreated successfully")
+                except Exception as e:
+                    logger.warning("Tray icon check failed: %s", str(e))
+            
+            logger.debug("Heartbeat check completed at %s", datetime.datetime.fromtimestamp(current_time).strftime("%Y-%m-%d %H:%M:%S"))
+            
+        except Exception as e:
+            logger.error("Error in heartbeat check: %s", str(e), exc_info=True)
 
         # 状态栏
         ttk.Label(self.root, textvariable=self.main_window.status_var,
@@ -351,10 +405,20 @@ class AppWindow:
                 dc = ImageDraw.Draw(image)
                 dc.rectangle((16, 16, 48, 48), fill=(255, 255, 255))
 
-            # 创建菜单项
+            # 创建菜单项 - 确保所有回调都使用线程安全方式
+            def _safe_exit(icon, item):
+                """安全退出回调"""
+                def _exit_ui():
+                    try:
+                        self._on_close()
+                    except Exception as e:
+                        logger.error("Error in safe exit: %s", str(e), exc_info=True)
+                if self.root:
+                    self.root.after(0, _exit_ui)
+            
             menu = Menu(
                 MenuItem('显示', self._show_from_tray),
-                MenuItem('退出', lambda _icon, _item: self._on_close())
+                MenuItem('退出', _safe_exit)
             )
 
             # 创建托盘图标
@@ -386,15 +450,27 @@ class AppWindow:
                 logger.error("Failed to show warning message: %s", str(msg_error))
 
     def _show_from_tray(self, icon=None, item=None):
-        """从系统托盘显示窗口
+        """从系统托盘显示窗口（线程安全版本）
 
         Args:
             icon: 托盘图标对象
             item: 菜单项对象
         """
-        self._is_visible = True
-        self.root.deiconify()
-        self.root.lift()
+        # 使用Tkinter的after方法确保UI操作在主线程执行
+        def _show_ui():
+            try:
+                if self.root and self.root.winfo_exists():
+                    self._is_visible = True
+                    self.root.deiconify()
+                    self.root.lift()
+                    self.root.focus_force()
+                    logger.info("Window shown from tray")
+            except Exception as e:
+                logger.error("Error showing window from tray: %s", str(e), exc_info=True)
+        
+        # 确保在主线程执行UI操作
+        if self.root:
+            self.root.after(0, _show_ui)
 
     def _on_minimize(self, event):
         """处理最小化事件
@@ -409,6 +485,9 @@ class AppWindow:
 
     def _on_close(self):
         """处理关闭事件"""
+        # 停止心跳检测
+        self._heartbeat_running = False
+        
         # 停止热键管理器
         if self.hotkey_manager:
             self.hotkey_manager.stop()
@@ -424,7 +503,10 @@ class AppWindow:
 
         # 隐藏托盘图标
         if self._tray_icon:
-            self._tray_icon.stop()
+            try:
+                self._tray_icon.stop()
+            except Exception as e:
+                logger.warning("Error stopping tray icon: %s", str(e))
             self._tray_icon = None
 
         # 停止窗口管理器
@@ -433,14 +515,24 @@ class AppWindow:
 
         # 保存配置
         if self.config_manager:
-            self.config_manager.save(self.config)
+            try:
+                self.config_manager.save(self.config)
+            except Exception as e:
+                logger.warning("Error saving config: %s", str(e))
 
         # 销毁主窗口
-        self.root.destroy()
+        try:
+            if self.root and self.root.winfo_exists():
+                self.root.destroy()
+        except Exception as e:
+            logger.warning("Error destroying root window: %s", str(e))
 
         # 调用退出回调
         if self.on_exit_callback:
-            self.on_exit_callback()
+            try:
+                self.on_exit_callback()
+            except Exception as e:
+                logger.warning("Error calling exit callback: %s", str(e))
 
     def run(self):
         """运行主窗口"""
