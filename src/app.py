@@ -85,17 +85,39 @@ def is_already_running():
     """检查程序是否已经在运行"""
     global _mutex_handle
     try:
-        # 创建互斥体
+        # 首先尝试创建全局互斥体（跨会话，管理员和普通用户都能看到）
+        # 使用Global\前缀确保在全局命名空间创建互斥体
+        global_mutex_name = f"Global\\{APP_GUID}"
+        
+        # 创建安全描述符，允许所有用户访问
+        # 定义SECURITY_ATTRIBUTES结构体
+        class SECURITY_ATTRIBUTES(ctypes.Structure):
+            _fields_ = [
+                ("nLength", ctypes.c_ulong),
+                ("lpSecurityDescriptor", ctypes.c_void_p),
+                ("bInheritHandle", ctypes.c_int)
+            ]
+        
+        # 创建允许所有人访问的安全描述符
+        # 简化处理：先尝试不使用安全描述符
         mutex = ctypes.windll.kernel32.CreateMutexW(
             None,  # lpMutexAttributes
             True,   # bInitialOwner
-            APP_GUID  # lpName
+            global_mutex_name  # lpName - 使用全局命名空间
         )
 
         # 检查是否成功创建互斥体
         if mutex == 0:
-            logger.error("Failed to create mutex")
-            return True
+            logger.error("Failed to create global mutex, trying local mutex")
+            # 如果全局互斥体创建失败，尝试本地互斥体
+            mutex = ctypes.windll.kernel32.CreateMutexW(
+                None,
+                True,
+                APP_GUID
+            )
+            if mutex == 0:
+                logger.error("Failed to create any mutex")
+                return True
 
         # 立即保存互斥体句柄引用，确保后续可以清理
         _mutex_handle = mutex
@@ -103,7 +125,7 @@ def is_already_running():
         # 检查互斥体是否已经存在
         last_error = ctypes.windll.kernel32.GetLastError()
         if last_error == ERROR_ALREADY_EXISTS:
-            logger.info("Application is already running")
+            logger.info("Application is already running (detected by mutex)")
             # 显示弹出提示
             try:
                 ctypes.windll.user32.MessageBoxW(
@@ -119,6 +141,7 @@ def is_already_running():
                 cleanup_mutex()
             return True
 
+        logger.info("Application mutex created successfully")
         return False
     except OSError as e:
         logger.error("OS error checking if already running: %s", str(e))

@@ -253,6 +253,10 @@ class AppWindow:
                 # 不要调用messagebox，避免可能的递归问题
 
         self.notebook.bind("<<NotebookTabChanged>>", on_tab_change)
+        
+        # 状态栏 - 只创建一次
+        ttk.Label(self.root, textvariable=self.main_window.status_var,
+                 relief=tk.SUNKEN, anchor=tk.W).pack(side=tk.BOTTOM, fill=tk.X)
     
     def _auto_init_time_sync_tab(self):
         """自动初始化时间校准选项卡（延迟30秒执行）"""
@@ -330,10 +334,6 @@ class AppWindow:
             
         except Exception as e:
             logger.error("Error in heartbeat check: %s", str(e), exc_info=True)
-
-        # 状态栏
-        ttk.Label(self.root, textvariable=self.main_window.status_var,
-                 relief=tk.SUNKEN, anchor=tk.W).pack(side=tk.BOTTOM, fill=tk.X)
 
     def _reset_all(self):
         """全部重置"""
