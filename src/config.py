@@ -210,7 +210,7 @@ class ConfigManager:
         return True
 
     def _do_save(self) -> bool:
-        """执行实际的保存操作
+        """执行实际的保存操作（改进权限处理）
 
         Returns:
             bool: 是否保存成功
@@ -219,10 +219,32 @@ class ConfigManager:
             return False
 
         try:
-            with open(self.config_file, 'w', encoding='utf-8') as f:
-                json.dump(asdict(self._config), f, ensure_ascii=False, indent=4)
+            # 先尝试以常规方式保存
+            try:
+                with open(self.config_file, 'w', encoding='utf-8') as f:
+                    json.dump(asdict(self._config), f, ensure_ascii=False, indent=4)
+            except PermissionError:
+                # 如果权限错误，尝试先删除旧文件再保存
+                logger.warning("Permission error, trying alternative save method")
+                if self.config_file.exists():
+                    try:
+                        # 尝试重命名旧文件作为备份
+                        backup_file = self.config_file.with_suffix('.json.tmp')
+                        if backup_file.exists():
+                            backup_file.unlink()
+                        self.config_file.rename(backup_file)
+                        # 保存新文件
+                        with open(self.config_file, 'w', encoding='utf-8') as f:
+                            json.dump(asdict(self._config), f, ensure_ascii=False, indent=4)
+                        # 删除备份
+                        backup_file.unlink()
+                    except Exception as rename_error:
+                        logger.warning("Rename method failed: %s", str(rename_error))
+                        # 如果重命名也失败，尝试直接覆盖（可能不优雅，但至少尝试）
+                        with open(self.config_file, 'w', encoding='utf-8') as f:
+                            json.dump(asdict(self._config), f, ensure_ascii=False, indent=4)
 
-            # 设置配置文件权限为仅所有者可读写
+            # 尝试设置配置文件权限，但不影响保存结果
             try:
                 os.chmod(self.config_file, stat.S_IRUSR | stat.S_IWUSR)
             except (OSError, AttributeError):

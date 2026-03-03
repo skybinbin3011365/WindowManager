@@ -13,15 +13,6 @@ VERSION_PATCH = 0
 # Windows API 错误码
 ERROR_ALREADY_EXISTS = 183  # 互斥体已存在错误码
 
-# 热键管理器常量
-TEMP_HOTKEY_ID = 9999  # 临时热键ID，用于检测热键冲突
-DEFAULT_HOTKEY_TIMEOUT = 1.0  # 热键录制超时时间（秒）
-HOTKEY_POLLING_INTERVAL = 0.05  # 热键轮询间隔（秒）
-HOTKEY_RECORDING_INTERVAL = 0.01  # 热键录制轮询间隔（秒）
-HOTKEY_TIME_WINDOW = 0.5  # 热键序列时间窗口（秒）
-HOTKEY_CHECK_INTERVAL = 0.05  # 热键检查间隔（秒）
-HOTKEY_ERROR_SLEEP = 0.1  # 热键错误后睡眠时间（秒）
-
 # NTP时间同步常量
 NTP_DEFAULT_TIMEOUT = 2  # NTP请求默认超时时间（秒）
 NTP_CALIBRATE_TIMEOUT = 3  # NTP校准超时时间（秒）

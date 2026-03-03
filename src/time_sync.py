@@ -101,11 +101,11 @@ class TimeSync:
         self._min_calibration_interval = 5
 
     def _query_ntp_server(self, server, timeout=2):
-        """查询NTP服务器获取时间数据"""
+        """查询NTP服务器获取时间数据（修复WinError 10022）"""
         sock = None
         try:
-            # 创建简单的UDP socket，不指定协议
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            # 创建UDP socket，显式指定协议
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
             sock.settimeout(timeout)
             
             # 发送NTP请求

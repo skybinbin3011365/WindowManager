@@ -40,7 +40,7 @@ for filename in os.listdir(build_dir):
 
 # 复制配置文件和图标
 shutil.copy(os.path.join(project_root, 'config.json'), os.path.join(build_dir, 'config.json'))
-shutil.copy(os.path.join(project_root, 'WinHide.png'), os.path.join(build_dir, 'WinHide.png'))
+shutil.copy(os.path.join(project_root, 'WinHide2.png'), os.path.join(build_dir, 'WinHide2.png'))
 
 # 创建打包入口脚本
 entry_path = os.path.join(build_dir, '__main__.py')
@@ -60,13 +60,14 @@ a = Analysis(
     binaries=[],
     datas=[
         (os.path.join(build_dir, 'config.json'), '.'),
-        (os.path.join(build_dir, 'WinHide.png'), '.'),
+        (os.path.join(build_dir, 'WinHide2.png'), '.'),
     ],
     hiddenimports=[
         'win32gui', 'win32api', 'win32con', 'win32process', 'win32security',
-        'pystray', 'PIL', 'PIL.Image', 'PIL.ImageDraw',
+        'pystray', 'PIL', 'PIL.Image', 'PIL.ImageDraw', 'PIL.ImageTk',
         'tkinter', 'tkinter.ttk', 'tkinter.messagebox', 'tkinter.scrolledtext',
         'logging', 'win32', 'win32.lib', 'psutil',
+        'pynput', 'pynput.keyboard', 'pynput.mouse',
     ],
     noarchive=False,
 )
@@ -93,5 +94,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=os.path.join(project_root, 'WinHide.png'),  # 设置exe图标
+    icon=os.path.join(project_root, 'WinHide2.png'),  # 设置exe图标
 )

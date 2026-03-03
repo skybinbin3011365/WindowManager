@@ -16,7 +16,6 @@ except ImportError:
     tk = ttk = messagebox = None
 
 from . import time_sync
-from .config import Config
 TimeSync = time_sync.TimeSync
 
 logger = logging.getLogger(__name__)
@@ -189,14 +188,20 @@ class TimeSyncTab:
 
         # 延迟初始化，避免选项卡切换时阻塞UI
         def delayed_init():
-            logger.info("开始延迟初始化时间校准选项卡")
-            # 先初始化本地时间和NTP时间
-            self._initialize_times()
+            logger.info("开始延迟初始化时间校准选项卡（简化版本）")
+            # 只初始化本地时间，不自动连接NTP服务器
+            import time
+            import datetime
+            real_local_time = time.time()
+            self._software_local_time = real_local_time
+            self._software_ntp_time = real_local_time  # 初始时使用本地时间作为NTP时间
+            self._last_ntp_update_time = real_local_time
+            self._is_ntp_initialized = True  # 标记为已初始化，避免等待
+            logger.info("时间校准选项卡初始化完成（使用本地时间）")
             # 启动定时更新
             self._start_time_update()
             # 初始化倒计时
             self._reset_countdown()
-            logger.info("时间校准选项卡延迟初始化完成")
         
         self.root.after(500, delayed_init)
 
