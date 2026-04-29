@@ -12,6 +12,7 @@
 - **进程白名单**：可设置进程白名单，过滤不需要管理的窗口
 - **自动切换界面**：时间校准选项卡作为启动界面，30秒后自动切换回时间校准
 - **开机自启动**：可选开机自启动功能
+- **日志管理**：支持窗口操作日志和校时日志的开关控制
 
 ## 安装
 
@@ -19,6 +20,7 @@
 
 - Python 3.12+
 - 必要的Python包：
+  - PySide6
   - Pillow
   - pywin32
   - psutil
@@ -26,29 +28,31 @@
 
 ### 安装步骤
 
-1. 克隆或下载项目到本地
-2. 安装依赖：
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. 运行主程序：
-   ```bash
-   python run.py
-   ```
+```bash
+# 克隆项目
+git clone https://github.com/skybinbin3011365/WindowManager.git
+cd WindowManager
+
+# 安装依赖
+pip install -r requirements.txt
+
+# 运行主程序
+python run_spec.py
+```
 
 ### 打包发布
 
 使用PyInstaller打包成可执行文件：
 
 ```bash
-# 无控制台窗口版本
-pyinstaller windowmanager_noconsole.spec
+# 打包（使用统一的spec文件）
+pyinstaller WinHide.spec
 
-# 带控制台窗口版本
-pyinstaller windowmanager_console.spec
+# 带控制台调试版本
+pyinstaller WinHide.spec --console
 ```
 
-打包后的文件位于 `dist` 目录。
+打包后的文件位于 `dist/WinHide/` 目录。
 
 ## 使用指南
 
@@ -94,6 +98,14 @@ pyinstaller windowmanager_console.spec
 3. 点击"添加"按钮添加到白名单
 4. 白名单中的进程窗口不会显示在窗口列表中
 
+### 日志控制
+
+1. 在"设置"选项卡的"日志设置"区域
+2. **窗口操作日志**：记录窗口隐藏/显示操作
+3. **校时日志**：记录时间校准信息
+   - 开启：显示所有时间调整记录
+   - 关闭：仅显示大于1000ms的时间调整
+
 ### 时间校准设计原理
 
 针对域服务器时间不准确的问题，本软件采用以下设计：
@@ -104,13 +116,13 @@ pyinstaller windowmanager_console.spec
 
 2. **时间差计算**：基于软件内部的两个时间计算和判断
 
-3. **自动校准**：时间差超出5秒时，直接使用软件内部的NTP时间校准系统时间
+3. **自动校准**：时间差超出阈值时，直接使用软件内部的NTP时间校准系统时间
 
 这样既避免了频繁的网络请求，又确保了时间校准的准确性。
 
 ## 配置文件
 
-程序使用`config.json`文件存储配置信息，包括：
+程序使用`config/config.json`文件存储配置信息，包括：
 
 - 热键设置（隐藏热键、显示热键）
 - NTP服务器列表
@@ -128,28 +140,39 @@ windowmanager/
 ├── src/                    # 源代码目录
 │   ├── __init__.py
 │   ├── app.py             # 应用入口
-│   ├── config.py          # 配置类
+│   ├── config.py          # 配置类（支持观察者模式）
 │   ├── constants.py       # 常量定义
 │   ├── core.py            # 核心模块（窗口信息、Windows API）
 │   ├── hotkey_manager.py  # 热键管理
+│   ├── hotkey_recorder.py # 热键录制
+│   ├── hotkey_recorder_core.py # 热键录制核心
+│   ├── log_utils.py       # 日志工具（结构化日志、性能日志）
 │   ├── manager.py         # 窗口管理器
+│   ├── run_spec.py        # 打包入口脚本
 │   ├── time_sync.py       # 时间同步
+│   ├── theme.py           # 主题管理
 │   ├── ui.py              # 主UI
 │   ├── ui_about.py        # 关于界面
 │   ├── ui_main.py         # 主窗口界面
 │   ├── ui_settings.py     # 设置界面
 │   ├── ui_time_sync.py    # 时间校准界面
-│   └── utils.py           # 工具函数
-├── dist/                   # 打包输出目录
-├── build/                  # 构建临时目录
+│   ├── ui_whitelist.py    # 白名单管理界面
+│   ├── utils.py           # 工具函数
+│   ├── window_base.py     # 窗口基础模型（消除循环依赖）
+│   ├── window_classifier.py # 窗口分类器
+│   ├── window_models.py   # 窗口数据模型
+│   └── widgets/           # 窗口小组件
+├── config/                # 配置文件目录
+├── assets/                # 资源文件目录
+├── dist/                  # 打包输出目录
 ├── .gitignore             # Git忽略文件
-├── config.json            # 配置文件
+├── .flake8               # Flake8配置
+├── .pylintrc             # Pylint配置
+├── pyproject.toml        # 项目配置
 ├── requirements.txt       # 依赖列表
-├── run.py                 # 开发环境运行脚本
-├── windowmanager_noconsole.spec  # 无控制台打包配置
-├── windowmanager_console.spec    # 带控制台打包配置
-├── WinHide2.png           # 软件图标
-└── README.md              # 项目说明
+├── requirements-dev.txt   # 开发依赖列表
+├── WinHide.spec          # 打包配置（统一）
+└── README.md             # 项目说明
 ```
 
 ## 注意事项
@@ -160,27 +183,6 @@ windowmanager/
 - 建议使用管理员权限运行以获得完整功能
 - 程序最小化到任务栏，不再使用系统托盘
 
-## 开发说明
-
-### 运行测试
-
-```bash
-# 测试NTP服务器
-python test_ntp.py
-
-# 测试导入
-python test_imports.py
-```
-
-### 代码规范
-
-- 遵循PEP 8代码规范
-- 使用有意义的变量和函数名
-- 添加必要的中文注释（关键节点和难懂的代码）
-- 避免不必要的对象复制或克隆
-- 避免多层嵌套，提前返回
-- 使用适当的并发控制机制
-
 ## 许可证
 
 本项目采用MIT许可证。
@@ -190,6 +192,14 @@ python test_imports.py
 Stephen Zhao
 
 ## 版本历史
+
+- **v1.3** (2026-04-29)
+  - 完成代码优化和重构，代码评分提升至9.92/10
+  - 修复PyInstaller打包问题
+  - 添加结构化日志系统（log_utils）
+  - 优化校时日志控制逻辑
+  - 消除循环依赖（window_base模块）
+  - 添加单元测试支持
 
 - **v1.2** (2026-03-02)
   - 分离隐藏热键和显示热键的录制按钮
