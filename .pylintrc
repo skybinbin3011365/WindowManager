@@ -1,0 +1,35 @@
+[MASTER]
+recursive=yes
+ignore=.git,__pycache__,venv,dist,build,tests
+
+disable=
+    missing-module-docstring,
+    missing-class-docstring,
+    missing-function-docstring,
+    unused-import,
+    unused-variable,
+    unused-argument,
+    global-statement,
+    logging-fstring-interpolation,
+    protected-access,
+    unnecessary-pass,
+    unnecessary-lambda,
+    redefined-outer-name,
+    reimported,
+    attribute-defined-outside-init,
+    cell-var-from-loop,
+    ungrouped-imports,
+    invalid-name,
+    import-outside-toplevel,
+    superfluous-parens,
+    c-extension-no-member,
+    no-name-in-module,
+    line-too-long,
+    wrong-import-position,
+    wrong-import-order,
+    broad-exception-caught,
+    pointless-string-statement,
+    too-many-lines,
+    too-many-arguments,
+    too-many-locals,
+    too-many-branches

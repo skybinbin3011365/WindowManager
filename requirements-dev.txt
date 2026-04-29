@@ -1,0 +1,11 @@
+# 窗口管理器 - 开发/打包工具依赖
+# 安装方式: pip install -r requirements-dev.txt
+
+# 打包工具
+pyinstaller>=6.0.0
+
+# 代码质量工具
+pytest>=7.0.0
+black>=23.0.0
+flake8>=7.0.0
+pylint>=3.0.0

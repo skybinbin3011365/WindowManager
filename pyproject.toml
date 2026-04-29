@@ -1,0 +1,100 @@
+[project]
+name = "windowmanager"
+version = "2.0.0"
+description = "Windows 窗口管理器 - 支持窗口隐藏、热键管理、时间校准"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "Stephen Zhao", email = "your.email@example.com"}
+]
+keywords = ["window", "manager", "hotkey", "windows", "pyside6"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Desktop Environment",
+]
+
+dependencies = [
+    "PySide6>=6.10.0",
+    "psutil>=7.0.0",
+    "pywin32>=311",
+    "pynput>=1.7.6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pyinstaller>=6.0.0",
+    "pytest>=7.0.0",
+    "black>=23.0.0",
+    "flake8>=7.0.0",
+    "pylint>=3.0.0",
+]
+
+[project.scripts]
+winhide = "app:main"
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"*" = ["*.json", "*.png"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.black]
+line-length = 100
+target-version = ["py39", "py310", "py311", "py312"]
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+  | \.venv
+  | build
+  | dist
+  | __pycache__
+)/
+'''
+
+[tool.flake8]
+max-line-length = 100
+exclude = [
+    ".git",
+    "__pycache__",
+    "build",
+    "dist",
+    ".venv",
+]
+ignore = ["E203", "W503"]
+
+[tool.pylint.messages_control]
+max-line-length = 100
+disable = [
+    "missing-docstring",
+    "too-few-public-methods",
+    "too-many-arguments",
+    "too-many-instance-attributes",
+]
+
+[tool.pyinstaller]
+# PyInstaller 配置文件映射
+# 统一打包配置文件: WinHide.spec
+# 使用方法：
+# - 生产环境打包（无控制台）: pyinstaller WinHide.spec
+# - 开发/调试环境打包（带控制台）: pyinstaller WinHide.spec --console
+specfile = "WinHide.spec"
