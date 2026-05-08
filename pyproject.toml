@@ -36,10 +36,12 @@ dev = [
     "black>=23.0.0",
     "flake8>=7.0.0",
     "pylint>=3.0.0",
+    "ruff>=0.6.0",
+    "mypy>=1.11.0",
 ]
 
 [project.scripts]
-winhide = "app:main"
+winhide = "src.app:main"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]

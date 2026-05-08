@@ -4,12 +4,11 @@
 """
 
 import logging
-import threading
 import queue
 import time
 from datetime import datetime
 from typing import Optional, List
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 
 
@@ -374,58 +373,6 @@ class StructuredLogger:
         self.logger.critical(formatted_message)
 
 
-def setup_logging(
-    level: str = "INFO",
-    log_file: Optional[str] = None,
-    enable_console: bool = True,
-    enable_buffered_handler: bool = False
-) -> logging.Logger:
-    """设置日志系统
-
-    统一配置日志系统，支持控制台输出、文件输出和缓冲处理。
-
-    Args:
-        level: 日志级别，可选值：DEBUG, INFO, WARNING, ERROR, CRITICAL
-        log_file: 日志文件路径，如果为None则不写入文件
-        enable_console: 是否启用控制台输出
-        enable_buffered_handler: 是否启用缓冲处理器
-
-    Returns:
-        logging.Logger: 配置好的根日志记录器
-    """
-    # 获取根日志记录器
-    root_logger = logging.getLogger()
-    root_logger.setLevel(getattr(logging, level.upper(), logging.INFO))
-
-    # 清除现有的处理器
-    root_logger.handlers.clear()
-
-    # 创建格式化器
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-
-    # 添加控制台处理器
-    if enable_console:
-        console_handler = logging.StreamHandler()
-        console_handler.setFormatter(formatter)
-        root_logger.addHandler(console_handler)
-
-    # 添加文件处理器
-    if log_file:
-        file_handler = logging.FileHandler(log_file, encoding='utf-8')
-        file_handler.setFormatter(formatter)
-        root_logger.addHandler(file_handler)
-
-    # 添加缓冲处理器
-    if enable_buffered_handler:
-        buffered_handler = BufferedLogHandler()
-        root_logger.addHandler(buffered_handler)
-
-    return root_logger
-
-
 # 导出常用的日志工具类和函数
 __all__ = [
     'LogLevel',
@@ -433,5 +380,4 @@ __all__ = [
     'BufferedLogHandler',
     'PerformanceLogger',
     'StructuredLogger',
-    'setup_logging'
 ]
