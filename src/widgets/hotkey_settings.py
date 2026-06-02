@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 热键设置部件
 PySide6版本
@@ -35,6 +36,7 @@ class HotkeySettingsWidget(QWidget):
     # 定义录制完成信号
     hide_recording_finished = Signal(str)
     show_recording_finished = Signal(str)
+    switch_recording_finished = Signal(str)
 
     def __init__(
         self,
@@ -64,6 +66,7 @@ class HotkeySettingsWidget(QWidget):
         # 连接录制完成信号
         self.hide_recording_finished.connect(self._on_hide_recording_finished)
         self.show_recording_finished.connect(self._on_show_recording_finished)
+        self.switch_recording_finished.connect(self._on_switch_recording_finished)
 
     def _init_ui(self) -> None:
         """初始化 UI"""
@@ -97,6 +100,19 @@ class HotkeySettingsWidget(QWidget):
 
         layout.addLayout(show_hotkey_layout)
 
+        # 切换窗口热键
+        switch_hotkey_layout = QHBoxLayout()
+        switch_hotkey_layout.addWidget(QLabel("切换窗口热键:"))
+        self.switch_hotkey_edit = QLineEdit()
+        self.switch_hotkey_edit.setReadOnly(True)
+        switch_hotkey_layout.addWidget(self.switch_hotkey_edit)
+
+        self.switch_record_btn = QPushButton("录制")
+        self.switch_record_btn.clicked.connect(self._record_switch_hotkey)
+        switch_hotkey_layout.addWidget(self.switch_record_btn)
+
+        layout.addLayout(switch_hotkey_layout)
+
     def _format_hotkey_for_display(self, hotkey: str) -> str:
         """格式化热键用于显示"""
         return HotkeyFormatter.format_hotkey(hotkey)
@@ -105,9 +121,14 @@ class HotkeySettingsWidget(QWidget):
         """加载热键设置"""
         if self.config:
             self.hide_hotkey_edit.setText(
-                self._format_hotkey_for_display(self.config.hide_hotkey))
+                self._format_hotkey_for_display(self.config.hotkey.hide_hotkey)
+            )
             self.show_hotkey_edit.setText(
-                self._format_hotkey_for_display(self.config.show_hotkey))
+                self._format_hotkey_for_display(self.config.hotkey.show_hotkey)
+            )
+            self.switch_hotkey_edit.setText(
+                self._format_hotkey_for_display(self.config.hotkey.switch_hotkey)
+            )
 
     def _record_hotkey(
         self, button: QPushButton, line_edit: QLineEdit, finish_signal: Signal
@@ -137,7 +158,9 @@ class HotkeySettingsWidget(QWidget):
             line_edit.setText(hotkey_str)
 
         # 只有当成功开始录制时，才设置回调
-        if not self.hotkey_manager.start_recording(recording_callback, realtime_callback):
+        if not self.hotkey_manager.start_recording(
+            recording_callback, realtime_callback
+        ):
             # 如果已经在录制中，立即恢复按钮状态
             button.setEnabled(True)
             button.setText("录制")
@@ -153,18 +176,8 @@ class HotkeySettingsWidget(QWidget):
         if not self.config:
             return
 
-        self.hide_hotkey_edit.setText(
-            self._format_hotkey_for_display(hotkey_str))
-        self.config.hide_hotkey = hotkey_str
-
-        if self.hotkey_manager:
-            try:
-                self.hotkey_manager.unregister_hide_hotkey()
-                # 发出热键更改信号，让主窗口更新热键回调
-                self.hotkeys_changed.emit()
-            except Exception as e:
-                logger.error("更新隐藏热键失败: %s", str(e))
-
+        self.hide_hotkey_edit.setText(self._format_hotkey_for_display(hotkey_str))
+        self.config.hotkey.hide_hotkey = hotkey_str
         self.hotkeys_changed.emit()
 
     def _record_show_hotkey(self) -> None:
@@ -178,18 +191,25 @@ class HotkeySettingsWidget(QWidget):
         if not self.config:
             return
 
-        self.show_hotkey_edit.setText(
-            self._format_hotkey_for_display(hotkey_str))
-        self.config.show_hotkey = hotkey_str
+        self.show_hotkey_edit.setText(self._format_hotkey_for_display(hotkey_str))
+        self.config.hotkey.show_hotkey = hotkey_str
+        self.hotkeys_changed.emit()
 
-        if self.hotkey_manager:
-            try:
-                self.hotkey_manager.unregister_show_hotkey()
-                # 发出热键更改信号，让主窗口更新热键回调
-                self.hotkeys_changed.emit()
-            except Exception as e:
-                logger.error("更新显示热键失败: %s", str(e))
+    def _record_switch_hotkey(self) -> None:
+        """录制切换窗口热键"""
+        self._record_hotkey(
+            self.switch_record_btn,
+            self.switch_hotkey_edit,
+            self.switch_recording_finished,
+        )
 
+    def _on_switch_recording_finished(self, hotkey_str: str) -> None:
+        """切换窗口热键录制完成"""
+        if not self.config:
+            return
+
+        self.switch_hotkey_edit.setText(self._format_hotkey_for_display(hotkey_str))
+        self.config.hotkey.switch_hotkey = hotkey_str
         self.hotkeys_changed.emit()
 
     def save_settings(self) -> None:

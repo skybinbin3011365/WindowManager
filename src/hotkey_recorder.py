@@ -6,21 +6,13 @@
 """
 
 import logging
+import time
 from PySide6.QtWidgets import QDialog, QLabel, QVBoxLayout
 from PySide6.QtCore import Qt, QTimer, Signal
 
-# 尝试导入pynput
-try:
-    from pynput import keyboard, mouse
-
-    PYNPUT_AVAILABLE = True
-except ImportError:
-    PYNPUT_AVAILABLE = False
-    keyboard = None
-    mouse = None
-
-# 导入共享的热键录制器
+from deps import PYNPUT_AVAILABLE, keyboard, mouse
 from hotkey_recorder_core import HotkeyRecorder
+from constants import TimeoutConstants
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -70,16 +62,16 @@ class HotkeyRecorderDialog(QDialog):
         """初始化定时器"""
         self.check_timer = QTimer()
         self.check_timer.timeout.connect(self.check_keys)
-        self.check_timer.start(20)  # 20ms 检查一次
+        self.check_timer.start(TimeoutConstants.HOTKEY_CHECK_INTERVAL_MS)  # 20ms 检查一次
 
         self.timeout_timer = QTimer()
         self.timeout_timer.timeout.connect(self.update_timeout)
-        self.timeout_timer.start(1000)  # 1秒更新一次
+        self.timeout_timer.start(TimeoutConstants.TIME_DISPLAY_UPDATE_INTERVAL_MS)  # 1秒更新一次
 
     def showEvent(self, event):
         """窗口显示事件"""
         super().showEvent(event)
-        self.start_time = __import__("time").time()
+        self.start_time = time.time()
 
         # 启动pynput监听器
         if PYNPUT_AVAILABLE:
@@ -134,7 +126,7 @@ class HotkeyRecorderDialog(QDialog):
         except Exception as e:
             logger.error("键盘按键释放处理错误: %s", str(e))
 
-    def _on_mouse_click(self, x, y, button, pressed):
+    def _on_mouse_click(self, _x, _y, button, pressed):
         """鼠标点击事件"""
         try:
             mouse_name = self._get_mouse_name(button)
@@ -165,11 +157,8 @@ class HotkeyRecorderDialog(QDialog):
         if not self.start_time:
             return
 
-        import time
-
         current_time = time.time()
 
-        # 检查是否超时
         if current_time - self.start_time >= self.timeout:
             self.finish_recording()
             return
@@ -180,7 +169,7 @@ class HotkeyRecorderDialog(QDialog):
             return
 
         remaining = max(
-            0, int(self.timeout - (__import__("time").time() - self.start_time)))
+            0, int(self.timeout - (time.time() - self.start_time)))
         self.time_label.setText(f"剩余时间: {remaining}秒")
 
     def finish_recording(self):

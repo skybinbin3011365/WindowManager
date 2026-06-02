@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # windowmanager/hotkey_recorder_core.py
 """
 热键录制核心模块
@@ -9,15 +10,8 @@ import time
 import logging
 from typing import Optional, Callable, List
 
-# 尝试导入pynput
-try:
-    from pynput import keyboard, mouse
-
-    PYNPUT_AVAILABLE = True
-except ImportError:
-    PYNPUT_AVAILABLE = False
-    keyboard = None
-    mouse = None
+from constants import TimeConstants
+from deps import PYNPUT_AVAILABLE, keyboard, mouse
 
 logger = logging.getLogger(__name__)
 
@@ -143,48 +137,48 @@ class HotkeyRecorder:
 
     @staticmethod
     def format_key_name(key: str) -> str:
-        """格式化单个按键名称"""
+        """格式化单个按键名称（统一大写）"""
         mapping = {
-            "ctrl": "Ctrl",
-            "alt": "Alt",
-            "shift": "Shift",
-            "win": "Win",
-            "left": "LButton",
-            "right": "RButton",
-            "middle": "MButton",
+            "ctrl": "CTRL",
+            "alt": "ALT",
+            "shift": "SHIFT",
+            "win": "WIN",
+            "left": "LBUTTON",
+            "right": "RBUTTON",
+            "middle": "MBUTTON",
             # 支持大小写变体
-            "shift_l": "Shift",
-            "shift_r": "Shift",
-            "ctrl_l": "Ctrl",
-            "ctrl_r": "Ctrl",
-            "alt_l": "Alt",
-            "alt_r": "Alt",
-            "cmd_l": "Win",
-            "cmd_r": "Win",
+            "shift_l": "SHIFT",
+            "shift_r": "SHIFT",
+            "ctrl_l": "CTRL",
+            "ctrl_r": "CTRL",
+            "alt_l": "ALT",
+            "alt_r": "ALT",
+            "cmd_l": "WIN",
+            "cmd_r": "WIN",
         }
         key_lower = key.lower()
         if key_lower in mapping:
             return mapping[key_lower]
-        return key.capitalize() if len(key) == 1 else key
+        # 统一大写显示
+        return key.upper()
 
     @staticmethod
     def get_key_name(key):
         """获取键盘按键名称"""
         try:
-            # 处理修饰键
+            if not PYNPUT_AVAILABLE or keyboard is None:
+                return str(key)
             if key in (keyboard.Key.shift_l, keyboard.Key.shift_r):
                 return "Shift"
-            elif key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
+            if key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
                 return "Ctrl"
-            elif key in (keyboard.Key.alt_l, keyboard.Key.alt_r):
+            if key in (keyboard.Key.alt_l, keyboard.Key.alt_r):
                 return "Alt"
-            elif key in (keyboard.Key.cmd_l, keyboard.Key.cmd_r):
+            if key in (keyboard.Key.cmd_l, keyboard.Key.cmd_r):
                 return "Win"
-            # 处理普通字符键
-            elif hasattr(key, "char") and key.char:
+            if hasattr(key, "char") and key.char:
                 return key.char.upper()
-            # 处理特殊键
-            elif hasattr(key, "name"):
+            if hasattr(key, "name"):
                 return key.name.capitalize()
             return str(key)
         except Exception:
@@ -194,11 +188,13 @@ class HotkeyRecorder:
     def get_mouse_name(button):
         """获取鼠标按键名称"""
         try:
+            if not PYNPUT_AVAILABLE or mouse is None:
+                return str(button)
             if button == mouse.Button.left:
                 return "Left Click"
-            elif button == mouse.Button.right:
+            if button == mouse.Button.right:
                 return "Right Click"
-            elif button == mouse.Button.middle:
+            if button == mouse.Button.middle:
                 return "Middle Click"
             return str(button)
         except Exception:
@@ -227,7 +223,7 @@ class HotkeyRecorder:
                     self._realtime_update_callback = None
                     break
 
-            time.sleep(0.1)
+            time.sleep(TimeConstants.SHORT_SLEEP_SECONDS)
 
         if callback:
             try:

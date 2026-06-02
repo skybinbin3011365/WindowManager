@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # windowmanager/config.py
 """
 统一配置管理模块
@@ -18,10 +19,58 @@ from typing import Optional
 
 import logging
 
-from constants import ConfigConstants, NTPConstants
+from constants import ConfigConstants, NTPConstants, PathConstants
 from window_models import WindowEntry, WindowEntryState
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class NtpConfig:
+    """NTP 时间同步配置"""
+    ntp_servers: list[str] = field(default_factory=lambda: NTPConstants.DEFAULT_NTP_SERVERS.copy())
+    auto_sync_enabled: bool = False
+    auto_sync_interval_hours: float = 1.0
+    ntp_check_interval: int = 60
+    ntp_error_threshold: int = 5
+    ntp_auto_calibrate: bool = False
+    enable_ntp_log: bool = True
+    enable_timed_calibration: bool = True
+    calibration_interval: int = 30
+
+
+@dataclass
+class HotkeyConfig:
+    """热键配置"""
+    hide_hotkey: str = "MBUTTON+RBUTTON"
+    show_hotkey: str = "SHIFT+RBUTTON"
+    switch_hotkey: str = "CTRL+RBUTTON"
+
+
+@dataclass
+class LogConfig:
+    """日志配置"""
+    log_level: str = "INFO"
+    enable_window_refresh_log: bool = True
+    enable_window_operation_log: bool = True
+    enable_debug_log: bool = False
+
+
+@dataclass
+class LayoutConfig:
+    """布局配置（分隔器尺寸等）"""
+    main_horizontal_splitter_sizes: list[int] = field(default_factory=lambda: [200, 600])
+    main_vertical_splitter_sizes: list[int] = field(default_factory=lambda: [120, 250, 120])
+    main_splitter_sizes: list[int] = field(default_factory=lambda: [120, 250, 120])
+    settings_splitter_sizes: list[int] = field(default_factory=list)
+
+
+@dataclass
+class FilterConfig:
+    """过滤配置（关键字、白名单、自动选择进程）"""
+    keywords: list[str] = field(default_factory=list)
+    process_whitelist: list[str] = field(default_factory=list)
+    auto_select_processes: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -31,36 +80,22 @@ class Config:
     包含所有应用程序配置项，提供默认值和类型提示
     """
 
-    # 版本信息
     version: str = ConfigConstants.CONFIG_VERSION
 
-    # 热键配置
-    hide_hotkey: str = "MBUTTON+RBUTTON"
-    show_hotkey: str = "SHIFT+RBUTTON"
-    switch_hotkey: str = "CTRL+RBUTTON"  # 切换窗口热键（将指定进程的窗口恢复到前台）
+    hotkey: HotkeyConfig = field(default_factory=HotkeyConfig)
+    log: LogConfig = field(default_factory=LogConfig)
+    layout: LayoutConfig = field(default_factory=LayoutConfig)
+    ntp: NtpConfig = field(default_factory=NtpConfig)
+    filter: FilterConfig = field(default_factory=FilterConfig)
 
-    # 切换窗口配置：进程名列表，热键触发时恢复这些进程的窗口到前台
-    switch_processes: list[str] = field(default_factory=list)  # 切换窗口的进程名列表（用户配置，默认为空）
+    switch_processes: list[str] = field(default_factory=list)
+    switch_windows: list[dict] = field(default_factory=list)
 
-    # 日志配置
-    log_level: str = "INFO"
-    enable_window_refresh_log: bool = True  # 是否启用窗口刷新日志
-    enable_window_operation_log: bool = True  # 是否启用窗口操作日志
-    enable_debug_log: bool = False  # 是否在日志面板显示 DEBUG 级别消息
-
-    # 自动启动配置
     auto_start: bool = False
     auto_refresh_interval: float = 10.0
 
-    # 窗口管理配置
-    keywords: list[str] = field(default_factory=list)
-    process_whitelist: list[str] = field(default_factory=list)
-    auto_select_processes: list[str] = field(default_factory=list)  # 自动选中的进程名列表（用户配置，默认为空）
-
-    # 重构：设定窗口列表，包含完整状态信息（符合用户文档要求）
     target_windows: list[dict] = field(default_factory=list)
 
-    # UI 配置
     ui: dict = field(
         default_factory=lambda: {
             "width": 1000,
@@ -69,19 +104,6 @@ class Config:
             "hidden_columns": [],
         }
     )
-
-    # 时间校准配置
-    ntp_servers: list[str] = field(default_factory=lambda: NTPConstants.DEFAULT_NTP_SERVERS.copy())
-    auto_sync_enabled: bool = False
-    auto_sync_interval_hours: float = 1.0
-
-    # NTP 时间同步配置
-    ntp_check_interval: int = 60  # NTP 检查间隔（秒）
-    ntp_error_threshold: int = 5  # NTP 误差阈值（秒）
-    ntp_auto_calibrate: bool = False  # 是否启用自动校准
-    enable_ntp_log: bool = True  # 是否启用 NTP 获取日志
-    enable_timed_calibration: bool = True  # 是否启用定时校准
-    calibration_interval: int = 30  # 校准周期（秒）
 
 
 class ConfigManager:
@@ -124,24 +146,17 @@ class ConfigManager:
         """初始化配置管理器
 
         Args:
-            config_dir: 配置目录路径，如果为None则使用默认目录
+            config_dir: 配置目录路径，如果为None则使用默认目录（exe同目录）
         """
-        # 优先使用 exe 同目录的配置文件
         if config_dir is None:
-            if getattr(sys, "frozen", False):
-                # 打包环境：使用 exe 同目录
-                config_dir = pathlib.Path(sys.executable).parent
-                self.config_dir = config_dir
-                self.config_file = self.config_dir / "config.json"
+            if getattr(sys, "frozen", False) or hasattr(sys, "__nuitka_binary__"):
+                self.config_dir = pathlib.Path(sys.executable).parent
             else:
-                # 开发环境：使用项目根目录（src 的上级）
-                config_dir = pathlib.Path(__file__).parent.parent
-                self.config_dir = pathlib.Path(config_dir)
-                self.config_file = self.config_dir / "config.json"
+                self.config_dir = pathlib.Path(__file__).parent.parent
         else:
-            # 自定义配置目录
             self.config_dir = pathlib.Path(config_dir)
-            self.config_file = self.config_dir / "config.json"
+
+        self.config_file = self.config_dir / PathConstants.CONFIG_FILE_NAME
 
         self._config: Optional[Config] = None
 
@@ -151,7 +166,7 @@ class ConfigManager:
         self._save_lock = threading.Lock()
 
         # 观察者模式相关
-        self._observers = []
+        self._observers: list = []
         self._observer_lock = threading.Lock()
 
         self._ensure_config_dir()
@@ -188,17 +203,31 @@ class ConfigManager:
 
                     # 安全地合并配置，确保所有字段都有值
                     config_dict = asdict(self._config)
-                    # 过滤掉旧版本中已废弃的字段
+
+                    # 先迁移再过滤：扁平字段（如 keywords）需要先迁移到嵌套格式
+                    # 否则会被 valid_fields 过滤掉，导致迁移逻辑无法找到它们
+                    data = self._validate_config_data(data)
+                    data = self._cleanup_legacy_config(data)
+
+                    # 过滤掉旧版本中已废弃的字段（迁移后只保留有效顶层键）
                     valid_fields = set(config_dict.keys())
                     filtered_data = {k: v for k, v in data.items() if k in valid_fields}
 
-                    # 验证配置数据的有效性
-                    filtered_data = self._validate_config_data(filtered_data)
-
-                    # 清理旧格式配置，防止数据冗余
-                    filtered_data = self._cleanup_legacy_config(filtered_data)
-
                     config_dict.update(filtered_data)
+
+                    # 将嵌套的 dict 转换为对应的 dataclass 实例
+                    # config_dict.update 会把 FilterConfig/HotkeyConfig 等替换为普通 dict
+                    # 需要在此处还原为正确的 dataclass 类型
+                    nested_configs = {
+                        "filter": FilterConfig,
+                        "hotkey": HotkeyConfig,
+                        "log": LogConfig,
+                        "layout": LayoutConfig,
+                        "ntp": NtpConfig,
+                    }
+                    for key, cls in nested_configs.items():
+                        if key in config_dict and isinstance(config_dict[key], dict):
+                            config_dict[key] = cls(**config_dict[key])
 
                     self._config = Config(**config_dict)
                     logger.info("配置加载成功: %s", self.config_file)
@@ -229,16 +258,12 @@ class ConfigManager:
         Returns:
             dict: 验证后的配置数据
         """
-        # 验证热键格式
-        if "hide_hotkey" in data:
-            if not self._validate_hotkey_format(data["hide_hotkey"]):
-                logger.warning("隐藏热键格式无效: %s，使用默认值", data["hide_hotkey"])
-                del data["hide_hotkey"]
-
-        if "show_hotkey" in data:
-            if not self._validate_hotkey_format(data["show_hotkey"]):
-                logger.warning("显示热键格式无效: %s，使用默认值", data["show_hotkey"])
-                del data["show_hotkey"]
+        # 验证热键格式（兼容扁平格式和嵌套格式）
+        hotkey_data = data.get("hotkey", data)
+        for key in ["hide_hotkey", "show_hotkey"]:
+            if key in hotkey_data and not self._validate_hotkey_format(hotkey_data[key]):
+                logger.warning("热键格式无效: %s，使用默认值", hotkey_data[key])
+                del hotkey_data[key]
 
         # 验证自动刷新间隔
         if "auto_refresh_interval" in data:
@@ -250,12 +275,13 @@ class ConfigManager:
                 del data["auto_refresh_interval"]
 
         # 验证 NTP 服务器列表
-        if "ntp_servers" in data:
-            if not isinstance(data["ntp_servers"], list) or not all(
-                isinstance(s, str) for s in data["ntp_servers"]
+        ntp_data = data.get("ntp", {})
+        if isinstance(ntp_data, dict) and "ntp_servers" in ntp_data:
+            if not isinstance(ntp_data["ntp_servers"], list) or not all(
+                isinstance(s, str) for s in ntp_data["ntp_servers"]
             ):
                 logger.warning("NTP服务器列表格式无效，使用默认值")
-                del data["ntp_servers"]
+                ntp_data.pop("ntp_servers")
 
         # 处理配置迁移和向后兼容性
         data = self._handle_config_migration(data)
@@ -266,15 +292,14 @@ class ConfigManager:
         """处理配置迁移和向后兼容性
 
         将旧的 selected_windows 和 hidden_windows 迁移到新的 target_windows 格式
-        同时保持向后兼容性
-
-        Args:
-            data: 原始配置数据
-
-        Returns:
-            dict: 迁移后的配置数据
+        将旧的扁平 NTP 属性迁移到新的嵌套 ntp 对象
         """
-        # 检查是否需要迁移
+        self._migrate_ntp_config(data)
+        self._migrate_hotkey_config(data)
+        self._migrate_log_config(data)
+        self._migrate_layout_config(data)
+        self._migrate_filter_config(data)
+
         has_old_format = "selected_windows" in data or "hidden_windows" in data
         has_new_format = "target_windows" in data
 
@@ -296,7 +321,7 @@ class ConfigManager:
                             process_name=process_name,
                             title=title,
                             state=WindowEntryState.VISIBLE,
-                            source="manual",
+                            source=WindowEntry.SOURCE_MANUAL,
                         )
                         target_windows.append(entry.to_dict())
                         logger.debug("迁移选中窗口: %s - %s", process_name, title)
@@ -309,18 +334,27 @@ class ConfigManager:
                     title = window_info.get("title", "")
 
                     if process_name and title:
-                        # 检查是否已存在（避免重复）
-                        exists = any(
-                            w.get("process_name") == process_name and w.get("title") == title
-                            for w in target_windows
-                        )
+                        # 检查是否已存在（优先用hwnd去重，回退用进程名+标题）
+                        saved_hwnd = window_info.get("hwnd", 0)
+                        if saved_hwnd > 0:
+                            # 主路径：用hwnd判断是否存在
+                            exists = any(
+                                w.get("hwnd") == saved_hwnd
+                                for w in target_windows
+                            )
+                        else:
+                            # 回退路径：旧版本配置没有hwnd，用进程名+标题判断
+                            exists = any(
+                                w.get("process_name") == process_name and w.get("title") == title
+                                for w in target_windows
+                            )
 
                         if not exists:
                             entry = WindowEntry(
                                 process_name=process_name,
                                 title=title,
                                 state=WindowEntryState.HIDDEN,
-                                source="manual",
+                                source=WindowEntry.SOURCE_MANUAL,
                             )
                             target_windows.append(entry.to_dict())
                             logger.debug("迁移隐藏窗口: %s - %s", process_name, title)
@@ -384,6 +418,60 @@ class ConfigManager:
             data.pop("hidden_windows", None)
 
         return data
+
+    @staticmethod
+    def _migrate_flat_to_nested(data: dict, section: str, keys: list) -> None:
+        """将旧的扁平属性迁移到嵌套对象
+
+        Args:
+            data: 配置数据
+            section: 嵌套对象名（如 'ntp', 'hotkey'）
+            keys: 需要迁移的扁平键名列表
+        """
+        has_flat = any(key in data for key in keys)
+        if not has_flat:
+            return
+
+        if section not in data:
+            data[section] = {}
+
+        for key in keys:
+            if key in data:
+                data[section][key] = data.pop(key)
+
+        logger.info("已将扁平 %s 配置迁移到嵌套格式", section)
+
+    @staticmethod
+    def _migrate_ntp_config(data: dict) -> None:
+        """将旧的扁平 NTP 属性迁移到嵌套的 ntp 对象"""
+        ConfigManager._migrate_flat_to_nested(data, "ntp", [
+            "ntp_servers", "auto_sync_enabled", "auto_sync_interval_hours",
+            "ntp_check_interval", "ntp_error_threshold", "ntp_auto_calibrate",
+            "enable_ntp_log", "enable_timed_calibration", "calibration_interval",
+        ])
+
+    @staticmethod
+    def _migrate_hotkey_config(data: dict) -> None:
+        """将旧的扁平热键属性迁移到嵌套的 hotkey 对象"""
+        ConfigManager._migrate_flat_to_nested(data, "hotkey", ["hide_hotkey", "show_hotkey", "switch_hotkey"])
+
+    @staticmethod
+    def _migrate_log_config(data: dict) -> None:
+        """将旧的扁平日志属性迁移到嵌套的 log 对象"""
+        ConfigManager._migrate_flat_to_nested(data, "log", ["log_level", "enable_window_refresh_log", "enable_window_operation_log", "enable_debug_log"])
+
+    @staticmethod
+    def _migrate_layout_config(data: dict) -> None:
+        """将旧的扁平布局属性迁移到嵌套的 layout 对象"""
+        ConfigManager._migrate_flat_to_nested(data, "layout", [
+            "main_horizontal_splitter_sizes", "main_vertical_splitter_sizes",
+            "main_splitter_sizes", "settings_splitter_sizes",
+        ])
+
+    @staticmethod
+    def _migrate_filter_config(data: dict) -> None:
+        """将旧的扁平过滤属性迁移到嵌套的 filter 对象"""
+        ConfigManager._migrate_flat_to_nested(data, "filter", ["keywords", "process_whitelist", "auto_select_processes"])
 
     def _validate_hotkey_format(self, hotkey: str) -> bool:
         """验证热键格式是否有效
@@ -496,9 +584,8 @@ class ConfigManager:
 
         if immediate:
             return self._do_save()
-        else:
-            self._schedule_save()
-            return True
+        self._schedule_save()
+        return True
 
     def _schedule_save(self):
         """安排延迟保存配置"""
@@ -601,18 +688,9 @@ class ConfigManager:
                 # 某些系统不支持 chmod，忽略权限设置
                 pass
 
-            # 原子操作：重命名临时文件为目标文件
+            # P2-7 修复: 使用 os.replace() 原子替换（Windows 上比 unlink+rename 更可靠）
             try:
-                # 在 Windows 上，需要先删除目标文件
-                if self.config_file.exists():
-                    try:
-                        self.config_file.unlink()
-                    except Exception as unlink_error:
-                        logger.warning("删除旧配置文件失败: %s", str(unlink_error))
-                        # 如果删除失败，尝试直接重命名（Windows 可能不允许）
-
-                # 重命名临时文件
-                temp_file.rename(self.config_file)
+                os.replace(str(temp_file), str(self.config_file))
             except Exception as rename_error:
                 logger.error("重命名文件失败: %s", str(rename_error))
                 if temp_file.exists():
@@ -670,13 +748,49 @@ class ConfigManager:
                 self._observers.remove(observer)
 
     def _notify_observers(self):
-        """通知所有观察者配置已更改"""
+        """通知所有观察者配置已更改
+
+        线程安全：如果当前不在主线程中（如 _delayed_save 的 threading.Timer 回调），
+        则将通知调度到主线程执行，避免观察者在子线程中操作 Qt 对象（如 QTimer）。
+        """
+        import threading
+
+        if threading.current_thread() is not threading.main_thread():
+            self._schedule_notify_on_main_thread()
+            return
+
+        self._do_notify_observers()
+
+    def _schedule_notify_on_main_thread(self):
+        """将观察者通知调度到主线程执行
+
+        使用 QTimer.singleShot(0, ...) 将通知投递到主线程事件循环，
+        确保观察者不会在子线程中操作 Qt 对象（如 QTimer.setInterval）。
+        """
+        try:
+            from PySide6.QtCore import QTimer
+            from PySide6.QtWidgets import QApplication
+
+            app = QApplication.instance()
+            if app is not None:
+                QTimer.singleShot(0, self._do_notify_observers)
+                return
+        except ImportError:
+            pass
+
+        # Qt 不可用时回退：直接在当前线程通知（可能不安全，但比丢失通知好）
+        logger.warning("Qt 不可用，在非主线程中通知观察者（可能不安全）")
+        self._do_notify_observers()
+
+    def _do_notify_observers(self):
+        """实际执行观察者通知"""
         with self._observer_lock:
-            for observer in list(self._observers):
-                try:
-                    observer.on_config_changed()
-                except Exception as e:
-                    logger.error("通知观察者失败: %s", str(e))
+            observers = list(self._observers)
+        for observer in observers:
+            try:
+                observer.on_config_changed()
+            except Exception as e:
+                logger.error("通知观察者失败: %s", str(e))
 
 
-__all__ = ["Config", "ConfigManager"]
+__all__ = ["Config", "ConfigManager", "HotkeyConfig", "LogConfig", "LayoutConfig", "NtpConfig", "FilterConfig"]

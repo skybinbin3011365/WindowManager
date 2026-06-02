@@ -1,6 +1,7 @@
 [MASTER]
 recursive=yes
 ignore=.git,__pycache__,venv,dist,build,tests
+init-hook="import sys; sys.path.insert(0, 'src')"
 
 disable=
     missing-module-docstring,
@@ -33,3 +34,8 @@ disable=
     too-many-arguments,
     too-many-locals,
     too-many-branches
+
+[DESIGN]
+max-attributes=12
+max-statements=60
+max-public-methods=25

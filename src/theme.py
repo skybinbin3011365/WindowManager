@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # windowmanager/theme.py
 """
 窗口管理器 - 现代化配色方案
@@ -131,25 +132,6 @@ class ModernTheme:
     FONT_SIZE_NORMAL = "13px"
     FONT_SIZE_MEDIUM = "14px"
     FONT_SIZE_LARGE = "16px"
-
-    # 阴影效果
-    SHADOW_SMALL = "0 1px 2px rgba(0, 0, 0, 0.3)"
-    SHADOW_MEDIUM = "0 2px 4px rgba(0, 0, 0, 0.3)"
-    SHADOW_LARGE = "0 4px 8px rgba(0, 0, 0, 0.4)"
-    SHADOW_GLOW = "0 0 10px rgba(99, 102, 241, 0.3)"
-
-    # 渐变效果
-    GRADIENT_PRIMARY = "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #6366F1, stop:1 #8B5CF6)"
-    GRADIENT_SURFACE = "qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #1E293B, stop:1 #0F172A)"
-    GRADIENT_BUTTON_PRIMARY = (
-        "qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #6366F1, stop:1 #4F46E5)"
-    )
-    GRADIENT_BUTTON_SUCCESS = (
-        "qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #10B981, stop:1 #059669)"
-    )
-    GRADIENT_BUTTON_DANGER = (
-        "qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #EF4444, stop:1 #DC2626)"
-    )
 
     @classmethod
     def get_primary(cls) -> str:
@@ -350,7 +332,7 @@ QGroupBox::title {{
     color: {cls.GROUP_BOX_TITLE};
 }}
 
-/* 按钮 - 统一样式，带阴影效果 */
+/* 按钮 */
 QPushButton {{
     background-color: {cls.BUTTON_SECONDARY};
     color: {cls.TEXT_PRIMARY};
@@ -381,15 +363,14 @@ QPushButton:disabled {{
     border-color: {cls.BORDER};
 }}
 
-/* 主按钮样式 - 带渐变效果 */
+/* 主按钮样式 */
 QPushButton#primaryButton {{
-    background: {cls.GRADIENT_BUTTON_PRIMARY};
-    border: 1px solid {cls.BUTTON_PRIMARY};
-    border-radius: 4px;
+    background-color: {cls.BUTTON_PRIMARY};
+    border-color: {cls.BUTTON_PRIMARY};
 }}
 
 QPushButton#primaryButton:hover {{
-    background: {cls.GRADIENT_BUTTON_PRIMARY};
+    background-color: {cls.BUTTON_PRIMARY_HOVER};
     border-color: {cls.BUTTON_PRIMARY_HOVER};
 }}
 
@@ -397,27 +378,25 @@ QPushButton#primaryButton:pressed {{
     background-color: {cls.BUTTON_PRIMARY_ACTIVE};
 }}
 
-/* 成功按钮样式 - 带渐变效果 */
+/* 成功按钮样式 */
 QPushButton#successButton {{
-    background: {cls.GRADIENT_BUTTON_SUCCESS};
-    border: 1px solid {cls.BUTTON_SUCCESS};
-    border-radius: 4px;
+    background-color: {cls.BUTTON_SUCCESS};
+    border-color: {cls.BUTTON_SUCCESS};
 }}
 
 QPushButton#successButton:hover {{
-    background: {cls.GRADIENT_BUTTON_SUCCESS};
+    background-color: {cls.BUTTON_SUCCESS_HOVER};
     border-color: {cls.BUTTON_SUCCESS_HOVER};
 }}
 
-/* 危险按钮样式 - 带渐变效果 */
+/* 危险按钮样式 */
 QPushButton#dangerButton {{
-    background: {cls.GRADIENT_BUTTON_DANGER};
-    border: 1px solid {cls.BUTTON_DANGER};
-    border-radius: 4px;
+    background-color: {cls.BUTTON_DANGER};
+    border-color: {cls.BUTTON_DANGER};
 }}
 
 QPushButton#dangerButton:hover {{
-    background: {cls.GRADIENT_BUTTON_DANGER};
+    background-color: {cls.BUTTON_DANGER_HOVER};
     border-color: {cls.BUTTON_DANGER_HOVER};
 }}
 
@@ -523,48 +502,6 @@ QComboBox QAbstractItemView::item:selected {{
     color: {cls.TABLE_ROW_SELECTED_TEXT};
 }}
 
-/* 搜索框样式 */
-QFrame#windowSearchFrame {{
-    background-color: {cls.SURFACE};
-    border: 1px solid {cls.BORDER};
-    border-radius: 6px;
-    padding: 2px;
-}}
-
-QLineEdit#windowSearchInput {{
-    background-color: {cls.INPUT_BACKGROUND};
-    border: 1px solid {cls.INPUT_BORDER};
-    border-radius: 4px;
-    padding: 4px 8px;
-    font-size: {cls.FONT_SIZE_NORMAL};
-}}
-
-QLineEdit#windowSearchInput:focus {{
-    border-color: {cls.PRIMARY};
-}}
-
-QLineEdit#windowSearchInput::placeholder {{
-    color: {cls.TEXT_MUTE};
-}}
-
-QPushButton#clearSearchBtn {{
-    background-color: transparent;
-    border: none;
-    color: {cls.TEXT_MUTE};
-    font-size: 14px;
-    border-radius: 4px;
-    padding: 2px 6px;
-}}
-
-QPushButton#clearSearchBtn:hover {{
-    background-color: {cls.SURFACE_LIGHT};
-    color: {cls.TEXT_PRIMARY};
-}}
-
-QPushButton#clearSearchBtn:pressed {{
-    background-color: {cls.SURFACE_LIGHTER};
-}}
-
 /* 复选框 */
 QCheckBox {{
     color: {cls.TEXT_PRIMARY};
@@ -625,13 +562,13 @@ QRadioButton::indicator:checked {{
     border-color: {cls.CHECKBOX_CHECKED};
 }}
 
-/* 表格 - 带阴影效果 */
+/* 表格 */
 QTableWidget {{
     background-color: {cls.BACKGROUND};
     alternate-background-color: {cls.TABLE_ROW_EVEN};
     gridline-color: {cls.TABLE_GRID};
     border: 1px solid {cls.BORDER};
-    border-radius: 6px;
+    border-radius: 4px;
     selection-background-color: {cls.PRIMARY};
     outline: none;
 }}

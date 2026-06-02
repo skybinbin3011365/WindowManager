@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 常量定义 - 消除魔法数字，提高代码可维护性
 """
@@ -14,16 +15,78 @@ class TimeoutConstants:
     SINGLE_SHOT_DELAY_MS = 1000  # 单次定时器延迟
     AUTO_REFRESH_DELAY_MS = 1500  # 自动刷新延迟
     HOTKEY_RECORDING_TIMEOUT_MS = 3000  # 热键录制超时
+    HOTKEY_CHECK_INTERVAL_MS = 20  # 热键检查间隔
+    TIME_DISPLAY_UPDATE_INTERVAL_MS = 1000  # 时间显示更新间隔
+    SETTINGS_AUTO_REFRESH_INTERVAL_MS = 60000  # 设置页面自动刷新间隔
+    AUTO_CALIBRATION_INTERVAL_MS = 60000  # 自动校时间隔
+
+
+# 时间常量（秒）
+class TimeConstants:
+    """时间常量（秒）"""
+
+    SHORT_SLEEP_SECONDS = 0.1  # 短睡眠时长
+    MEDIUM_SLEEP_SECONDS = 0.5  # 中等睡眠时长
+    LOG_TIME_OFFSET_THRESHOLD_SECONDS = 1.0  # 日志时间偏移阈值
+
+
+# 时间阈值常量
+class TimeThresholdConstants:
+    """时间阈值常量"""
+
+    LOG_TIME_OFFSET_THRESHOLD_MS = 1000  # 日志时间偏移阈值（毫秒）
 
 
 # 窗口相关常量
 class WindowConstants:
     """窗口相关常量"""
 
+    UNKNOWN_PROCESS_NAME = "unknown"
+    UNKNOWN_PROCESS_DISPLAY_NAME = "<unknown>"
+    ERROR_PROCESS_NAME = "<error>"
+    SYSTEM_PROCESS_NAME = "<system>"
+    UNKNOWN_PROCESS_PID_TEMPLATE = "unknown_{}"
+
     MAX_WINDOW_TITLE_LENGTH = 100  # 窗口标题最大长度
     MAX_PROCESS_NAME_LENGTH = 50  # 进程名最大长度
     MIN_WINDOW_HWND = 1  # 最小窗口句柄值
     BACKGROUND_PROCESS_HWND_OFFSET = -1  # 后台进程占位窗口句柄偏移量（负数表示占位符）
+
+    # 非用户窗口类名前缀（枚举时排除这些前缀开头的窗口类）
+    NON_USER_CLASS_PREFIXES = (
+        "DirectUIHWND",
+        "Internet Explorer_",
+        "Frame Folder",
+        "SysTreeView",
+        "SysListView",
+        "SysTree",
+        "SysList",
+    )
+
+    # 排除的窗口类名（系统桌面/任务栏/IME等非用户窗口）
+    EXCLUDED_CLASSES = {
+        "Progman",
+        "WorkerW",
+        "Shell_TrayWnd",
+        "Shell_SecondaryTrayWnd",
+        "Button",
+        "Static",
+        "Edit",
+        "#32770",
+        "tooltips_class32",
+        "MSCTFIME UI",
+        "IME",
+        "OleMainThreadWndClass",
+    }
+
+    # 排除的窗口标题
+    EXCLUDED_TITLES = {"", "Program Manager", "Settings"}
+
+    # 系统类名（用于窗口分类器中识别系统级窗口）
+    SYSTEM_CLASSES = {"IME", "MSCTFIME UI", "Tooltip"}
+
+    # 系统标题（用于窗口分类器中识别系统级窗口）
+    SYSTEM_TITLES = {"", "Program Manager", "Default IME", "MSCTFIME UI"}
 
 
 # UI相关常量
@@ -35,6 +98,13 @@ class UIConstants:
     MIN_WINDOW_WIDTH = 800  # 最小窗口宽度
     MIN_WINDOW_HEIGHT = 600  # 最小窗口高度
     TABLE_ROW_HEIGHT = 30  # 表格行高
+
+    # 启动延迟常量（毫秒）
+    START_WINDOW_MANAGER_DELAY = 100  # 启动窗口管理器延迟
+    POST_START_REFRESH_DELAY = 300  # 启动后延迟刷新
+    TRAY_INIT_RETRY_DELAY = 3000  # 托盘初始化重试延迟
+    TRAY_VISIBLE_CHECK_DELAY = 1000  # 托盘可见性检查延迟
+    TRAY_HEARTBEAT_INTERVAL = 30000  # 托盘心跳检测间隔
 
 
 # 日志相关常量
@@ -101,7 +171,6 @@ class PathConstants:
 
     LOG_DIR_NAME = "logs"  # 日志目录名
     LOG_FILE_NAME = "window_manager.log"  # 日志文件名
-    CONFIG_DIR_NAME = "config"  # 配置目录名
     CONFIG_FILE_NAME = "config.json"  # 配置文件名
 
     # 图标文件路径
@@ -127,11 +196,18 @@ class UIMainConstants:
     COLUMN_WIDTH_SELECT = 50  # 选择列宽度
     COLUMN_WIDTH_TYPE = 60  # 类型列宽度
     COLUMN_WIDTH_PROCESS = 100  # 进程列宽度
-    COLUMN_WIDTH_DISPLAY = 80  # 显示器列宽度
+    COLUMN_WIDTH_HWND = 90  # HWND列宽度
 
     # 时间常量
     INITIAL_REFRESH_DELAY = 1000  # 初始刷新延迟（毫秒）
     THREAD_WAIT_TIMEOUT = 1000  # 线程等待超时（毫秒）
+    THREAD_SHORT_WAIT_TIMEOUT = 100  # 线程短等待超时（毫秒，非阻塞）
+    RESTORE_HIDDEN_WINDOWS_DELAY = 500  # 恢复隐藏窗口延迟（毫秒）
+    LOAD_SWITCH_PROCESSES_DELAY = 600  # 加载切换进程配置延迟（毫秒）
+    AUTO_SELECT_KEYWORD_DELAY = 1500  # 自动选中关键字窗口延迟（毫秒）
+    THREAD_CLEANUP_MAX_CHECKS = 10  # 延迟清理最大检查次数
+    THREAD_CLEANUP_INTERVAL = 500  # 延迟清理检查间隔（毫秒）
+    TEMP_MESSAGE_DURATION = 2000  # 临时消息默认显示时长（毫秒）
 
     # 默认配置值
     DEFAULT_AUTO_REFRESH_INTERVAL = 5.0  # 默认自动刷新间隔（秒）

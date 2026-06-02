@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # windowmanager/window_table.py
 """
 窗口表格组件 - 独立的窗口表格 UI 组件
@@ -6,13 +7,9 @@
 
 from PySide6.QtWidgets import (
     QTableWidget,
-    QTableWidgetItem,
     QHeaderView,
     QAbstractItemView,
     QMenu,
-    QWidget,
-    QHBoxLayout,
-    QCheckBox,
 )
 from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt, Signal
@@ -32,7 +29,7 @@ class WindowTableWidget(QTableWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setColumnCount(5)
-        self.setHorizontalHeaderLabels(["选择", "类型", "标题", "进程", "显示器"])
+        self.setHorizontalHeaderLabels(["选择", "状态", "标题", "进程", "HWND"])
 
         # 设置列宽调整模式
         header = self.horizontalHeader()
@@ -40,13 +37,13 @@ class WindowTableWidget(QTableWidget):
         header.setSectionResizeMode(1, QHeaderView.Interactive)  # 类型列
         header.setSectionResizeMode(2, QHeaderView.Stretch)  # 标题列（自适应）
         header.setSectionResizeMode(3, QHeaderView.Interactive)  # 进程列
-        header.setSectionResizeMode(4, QHeaderView.Interactive)  # 显示器列
+        header.setSectionResizeMode(4, QHeaderView.Interactive)  # HWND列
 
         # 设置初始列宽
         self.setColumnWidth(0, UIMainConstants.COLUMN_WIDTH_SELECT)  # 选择列
         self.setColumnWidth(1, UIMainConstants.COLUMN_WIDTH_TYPE)  # 类型列
         self.setColumnWidth(3, UIMainConstants.COLUMN_WIDTH_PROCESS)  # 进程列
-        self.setColumnWidth(4, UIMainConstants.COLUMN_WIDTH_DISPLAY)  # 显示器列
+        self.setColumnWidth(4, UIMainConstants.COLUMN_WIDTH_HWND)  # HWND列
 
         # 设置标题行样式 - 现代化配色
         header.setStyleSheet(
@@ -106,7 +103,7 @@ class WindowTableWidget(QTableWidget):
         # 连接双击信号
         self.cellDoubleClicked.connect(self._on_cell_double_clicked)
 
-    def _on_cell_double_clicked(self, row: int, column: int):
+    def _on_cell_double_clicked(self, row: int, _column: int):
         """处理单元格双击"""
         # 获取窗口句柄（存储在标题列的 UserRole data 中）
         title_item = self.item(row, 2)
@@ -125,7 +122,7 @@ class WindowTableWidget(QTableWidget):
 
             # 检查是否点击了列头区域
             if pos.y() < header.height():
-                # 检查是否点击了"类型"列（第1列）
+                # 检查是否点击了"状态"列（第1列）
                 if column == 1:
                     self.status_header_clicked.emit()
                     return
@@ -139,8 +136,8 @@ class WindowTableWidget(QTableWidget):
         # 获取表头
         header = self.horizontalHeader()
 
-        # 为每一列添加显示/隐藏选项
-        column_names = ["选择", "类型", "标题", "进程", "显示器"]
+        # 列名映射（用于右键菜单显示/隐藏列）
+        column_names = ["选择", "状态", "标题", "进程", "HWND"]
         for i in range(self.columnCount()):
             action = QAction(column_names[i], self)
             action.setCheckable(True)

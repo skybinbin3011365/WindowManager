@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # windowmanager/ui_about.py
 """
 窗口管理器 - 关于模块 (PySide6版本)
@@ -55,90 +56,87 @@ class AboutTab(QWidget):
 
     def _init_ui(self) -> None:
         """初始化UI组件 - 左右两栏布局，带可调整分隔器"""
-        # 设置现代化样式
         self.setStyleSheet(theme.get_global_stylesheet())
 
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(5, 5, 5, 5)
         main_layout.setSpacing(5)
 
-        # 创建水平分隔器
         splitter = QSplitter(Qt.Horizontal)
+        splitter.addWidget(self._create_left_panel())
+        splitter.addWidget(self._create_right_panel())
+        splitter.setSizes([500, 500])
 
-        # ========== 左栏：关于内容 ==========
-        left_widget = QWidget()
-        left_layout = QVBoxLayout(left_widget)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(10)
+        main_layout.addWidget(splitter)
 
-        # 程序信息
-        info_group = QGroupBox("程序信息")
-        info_layout = QVBoxLayout(info_group)
+    def _create_left_panel(self) -> QWidget:
+        """创建左栏面板（程序信息、功能特性、版权信息）"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
 
-        # 图标和标题
+        layout.addWidget(self._create_info_group())
+        layout.addWidget(self._create_features_group())
+        layout.addWidget(self._create_copyright_group())
+        layout.addStretch()
+
+        return widget
+
+    def _create_info_group(self) -> QGroupBox:
+        """创建程序信息分组（图标、标题、版本、描述）"""
+        group = QGroupBox("程序信息")
+        layout = QVBoxLayout(group)
+
         header_layout = QHBoxLayout()
-
-        # 尝试加载图标 - 优先使用PNG格式
-        icon_label = QLabel()
-        icon_candidates = [get_resource_path(
-            icon) for icon in PathConstants.ICON_CANDIDATES]
-
-        icon_loaded = False
-        for icon_path in icon_candidates:
-            if icon_path and os.path.exists(icon_path):
-                pixmap = QPixmap(icon_path)
-                if pixmap.isNull():  # 修复逻辑：图片为空时跳过
-                    continue
-                # 使用更高质量的缩放方法
-                scaled_pixmap = pixmap.scaled(
-                    128,
-                    128,  # 使用更大的尺寸以提高清晰度
-                    Qt.KeepAspectRatio,
-                    Qt.SmoothTransformation,
-                )
-                # 设置固定大小以确保显示清晰
-                icon_label.setFixedSize(128, 128)
-                icon_label.setPixmap(scaled_pixmap)
-                icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                icon_loaded = True
-                break
-
-        if not icon_loaded:
-            # 如果没有图标，显示占位符
-            icon_label.setText("🖥️")
-            icon_label.setStyleSheet(
-                "font-size: 64px; color: %s;" % theme.PRIMARY)
-            icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            icon_label.setFixedSize(128, 128)
-
-        header_layout.addWidget(icon_label)
+        header_layout.addWidget(self._create_icon_label())
 
         title_layout = QVBoxLayout()
-        title_label = QLabel(AppConstants.APP_TITLE)
-        title_layout.addWidget(title_label)
-
-        version_label = QLabel(f"版本: {AppConstants.APP_VERSION}")
-        title_layout.addWidget(version_label)
-
+        title_layout.addWidget(QLabel(AppConstants.APP_TITLE))
+        title_layout.addWidget(QLabel(f"版本: {AppConstants.APP_VERSION}"))
         header_layout.addLayout(title_layout)
         header_layout.addStretch()
 
-        info_layout.addLayout(header_layout)
+        layout.addLayout(header_layout)
 
-        # 描述
         desc_label = QLabel(
             "一个轻量级的 Windows 窗口管理工具，\n"
             "支持快速隐藏/显示窗口、全局热键操作、\n"
             "关键字自动选择等功能。"
         )
         desc_label.setWordWrap(True)
-        info_layout.addWidget(desc_label)
+        layout.addWidget(desc_label)
 
-        left_layout.addWidget(info_group)
+        return group
 
-        # 功能特性
-        features_group = QGroupBox("功能特性")
-        features_layout = QVBoxLayout(features_group)
+    def _create_icon_label(self) -> QLabel:
+        """创建图标标签，自动尝试加载候选图标"""
+        icon_label = QLabel()
+        icon_candidates = [get_resource_path(icon) for icon in PathConstants.ICON_CANDIDATES]
+
+        for icon_path in icon_candidates:
+            if icon_path and os.path.exists(icon_path):
+                pixmap = QPixmap(icon_path)
+                if pixmap.isNull():
+                    continue
+                scaled_pixmap = pixmap.scaled(
+                    128, 128, Qt.KeepAspectRatio, Qt.SmoothTransformation,
+                )
+                icon_label.setFixedSize(128, 128)
+                icon_label.setPixmap(scaled_pixmap)
+                icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                return icon_label
+
+        icon_label.setText("🖥️")
+        icon_label.setStyleSheet(f"font-size: 64px; color: {theme.PRIMARY};")
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_label.setFixedSize(128, 128)
+        return icon_label
+
+    def _create_features_group(self) -> QGroupBox:
+        """创建功能特性分组"""
+        group = QGroupBox("功能特性")
+        layout = QVBoxLayout(group)
 
         features_text = QTextEdit()
         features_text.setReadOnly(True)
@@ -152,13 +150,14 @@ class AboutTab(QWidget):
             "• 系统托盘 - 最小化到托盘，后台运行\n"
             "• 开机自启动 - 可选开机自动启动"
         )
-        features_layout.addWidget(features_text)
+        layout.addWidget(features_text)
 
-        left_layout.addWidget(features_group)
+        return group
 
-        # 版权信息
-        copyright_group = QGroupBox("版权信息")
-        copyright_layout = QVBoxLayout(copyright_group)
+    def _create_copyright_group(self) -> QGroupBox:
+        """创建版权信息分组"""
+        group = QGroupBox("版权信息")
+        layout = QVBoxLayout(group)
 
         copyright_label = QLabel(
             "© 2024 WinHide 开发团队\n\n"
@@ -166,80 +165,72 @@ class AboutTab(QWidget):
             "如有问题或建议，欢迎反馈。"
         )
         copyright_label.setWordWrap(True)
-        copyright_layout.addWidget(copyright_label)
+        layout.addWidget(copyright_label)
 
-        left_layout.addWidget(copyright_group)
+        return group
 
-        left_layout.addStretch()
+    def _create_right_panel(self) -> QWidget:
+        """创建右栏面板（日志窗口）"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(5)
 
-        # 添加左栏到分隔器
-        splitter.addWidget(left_widget)
+        layout.addWidget(self._create_log_group())
 
-        # ========== 右栏：日志窗口 ==========
-        right_widget = QWidget()
-        right_layout = QVBoxLayout(right_widget)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(5)
+        return widget
 
-        log_group = QGroupBox("日志窗口")
-        log_layout = QVBoxLayout(log_group)
+    def _create_log_group(self) -> QGroupBox:
+        """创建日志窗口分组（日志文本框、选项复选框、操作按钮）"""
+        group = QGroupBox("日志窗口")
+        layout = QVBoxLayout(group)
 
-        # 日志文本框
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
-        log_layout.addWidget(self.log_text)
+        layout.addWidget(self.log_text)
 
-        # 日志选项
-        log_options_layout = QHBoxLayout()
+        layout.addLayout(self._create_log_options_layout())
+        layout.addLayout(self._create_log_buttons_layout())
 
-        # 窗口刷新日志选项
+        return group
+
+    def _create_log_options_layout(self) -> QHBoxLayout:
+        """创建日志选项复选框布局"""
+        layout = QHBoxLayout()
+
         self.window_refresh_log_check = QCheckBox("窗口刷新日志")
-        self.window_refresh_log_check.setChecked(
-            True)  # 默认值，将被 _load_log_options 覆盖
-        log_options_layout.addWidget(self.window_refresh_log_check)
+        self.window_refresh_log_check.setChecked(True)
+        layout.addWidget(self.window_refresh_log_check)
 
-        # 窗口操作日志选项
         self.window_operation_log_check = QCheckBox("记录窗口操作日志")
-        self.window_operation_log_check.setChecked(
-            True)  # 默认值，将被 _load_log_options 覆盖
-        log_options_layout.addWidget(self.window_operation_log_check)
+        self.window_operation_log_check.setChecked(True)
+        layout.addWidget(self.window_operation_log_check)
 
-        # 校时日志选项
         self.ntp_log_check = QCheckBox("校时日志")
-        self.ntp_log_check.setChecked(True)  # 默认值，将被 _load_log_options 覆盖
-        log_options_layout.addWidget(self.ntp_log_check)
+        self.ntp_log_check.setChecked(True)
+        layout.addWidget(self.ntp_log_check)
 
-        # DEBUG 日志选项
         self.debug_log_check = QCheckBox("显示 DEBUG 日志")
-        self.debug_log_check.setChecked(False)  # 默认关闭，将被 _load_log_options 覆盖
+        self.debug_log_check.setChecked(False)
         self.debug_log_check.setToolTip("勾选后日志面板将显示 DEBUG 级别的详细调试信息")
-        log_options_layout.addWidget(self.debug_log_check)
+        layout.addWidget(self.debug_log_check)
 
-        log_options_layout.addStretch()
-        log_layout.addLayout(log_options_layout)
+        layout.addStretch()
+        return layout
 
-        # 日志操作按钮
-        log_btn_layout = QHBoxLayout()
+    def _create_log_buttons_layout(self) -> QHBoxLayout:
+        """创建日志操作按钮布局"""
+        layout = QHBoxLayout()
+
         clear_log_btn = QPushButton("清空日志")
         clear_log_btn.clicked.connect(self._clear_log)
-        log_btn_layout.addWidget(clear_log_btn)
+        layout.addWidget(clear_log_btn)
 
         refresh_log_btn = QPushButton("刷新日志")
         refresh_log_btn.clicked.connect(self._refresh_log)
-        log_btn_layout.addWidget(refresh_log_btn)
+        layout.addWidget(refresh_log_btn)
 
-        log_layout.addLayout(log_btn_layout)
-
-        right_layout.addWidget(log_group)
-
-        # 添加右栏到分隔器
-        splitter.addWidget(right_widget)
-
-        # 设置分隔器初始比例
-        splitter.setSizes([500, 500])
-
-        # 添加分隔器到主布局
-        main_layout.addWidget(splitter)
+        return layout
 
     def _clear_log(self) -> None:
         """清空日志"""
@@ -257,13 +248,13 @@ class AboutTab(QWidget):
             config: 配置对象
         """
         self.window_refresh_log_check.setChecked(
-            getattr(config, "enable_window_refresh_log", True))
+            getattr(config.log, "enable_window_refresh_log", True))
         self.window_operation_log_check.setChecked(
-            getattr(config, "enable_window_operation_log", True)
+            getattr(config.log, "enable_window_operation_log", True)
         )
-        self.ntp_log_check.setChecked(getattr(config, "enable_ntp_log", True))
+        self.ntp_log_check.setChecked(getattr(config.ntp, "enable_ntp_log", True))
         self.debug_log_check.setChecked(
-            getattr(config, "enable_debug_log", False))
+            getattr(config.log, "enable_debug_log", False))
 
     def append_log(self, message: str) -> None:
         """添加日志消息（从日志处理器调用）
@@ -322,7 +313,7 @@ class AboutTab(QWidget):
         Args:
             config: Config 配置对象
         """
-        config.enable_window_refresh_log = self.window_refresh_log_check.isChecked()
-        config.enable_window_operation_log = self.window_operation_log_check.isChecked()
-        config.enable_ntp_log = self.ntp_log_check.isChecked()
-        config.enable_debug_log = self.debug_log_check.isChecked()
+        config.log.enable_window_refresh_log = self.window_refresh_log_check.isChecked()
+        config.log.enable_window_operation_log = self.window_operation_log_check.isChecked()
+        config.ntp.enable_ntp_log = self.ntp_log_check.isChecked()
+        config.log.enable_debug_log = self.debug_log_check.isChecked()

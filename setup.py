@@ -46,7 +46,9 @@ setup(
             "pyinstaller>=6.0.0",
             "pytest>=7.0.0",
             "black>=23.0.0",
-            "flake8>=6.0.0",
+            "flake8>=7.0.0",
+            "ruff>=0.6.0",
+            "mypy>=1.11.0",
         ],
     },
     package_data={

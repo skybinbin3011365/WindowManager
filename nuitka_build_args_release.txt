@@ -1,0 +1,158 @@
+# ============================================================
+#  WinHide - Nuitka build arguments (RELEASE)
+#
+#  This file is read by build.py (NOT by Nuitka directly).
+#  Nuitka does NOT support @response_file syntax.
+#
+#  Usage (from project root, venv activated):
+#
+#    python build.py --release    (any shell, release build)
+#    build_release.bat            (any shell, calls build.py --release)
+#
+#  Lines starting with # are comments, blank lines are ignored.
+#  All other lines are passed as-is to Nuitka as CLI arguments.
+#
+#  Differences from debug build:
+#    - No console window (--windows-console-mode=disable)
+#    - LTO enabled (--lto=yes) for smaller binary
+#    - Excluded unused Qt/stdlib modules
+#    - No config.json bundled (created at runtime by ConfigManager)
+# ============================================================
+
+# ── Compilation mode: standalone directory (no Python needed) ──
+--mode=standalone
+
+# ── Output directory ──────────────────────────────────────────
+--output-dir=dist_nuitka_release
+
+# ── Executable name ──────────────────────────────────────────
+--output-filename=WinHide
+
+# ── GUI app: NO console window ──────────────────────────────
+--windows-console-mode=disable
+
+# ── Runtime: force UTF-8 mode ────────────────────────────────
+--force-runtime-environment-variable=PYTHONUTF8=1
+
+# ── App icon ─────────────────────────────────────────────────
+--windows-icon-from-ico=assets/WinHide2.ico
+
+# ── UAC: admin rights (SendMessage required) ─────────────────
+--windows-uac-admin
+
+# ── C compiler: default (Nuitka auto-downloads gcc, same as debug build)
+#    NOTE: --msvc=latest fails from Git Bash/VSCode terminal because
+#    MSVC env vars are not set. To use MSVC, run from VS Developer Prompt.
+#    LTO is also disabled: --lto=yes with MinGW gcc is extremely slow
+#    (544s per file) and causes timeouts on Windows.
+
+# ── Python flags: skip site.py (smaller runtime) ─────────────
+--python-flag=no_site
+
+# ────────────────────────────────────────────────────────────
+#  Plugin: PySide6
+# ────────────────────────────────────────────────────────────
+--enable-plugin=pyside6
+
+# ────────────────────────────────────────────────────────────
+#  Force include: shiboken6
+# ────────────────────────────────────────────────────────────
+--include-package=shiboken6
+
+# ────────────────────────────────────────────────────────────
+#  Force include: pynput (ctypes dynamic loading)
+# ────────────────────────────────────────────────────────────
+--include-package=pynput
+--include-package=pynput.keyboard
+--include-package=pynput.mouse
+
+# ────────────────────────────────────────────────────────────
+#  Force include: pywin32 submodules
+# ────────────────────────────────────────────────────────────
+--include-package=win32api
+--include-package=win32con
+--include-package=win32gui
+--include-package=win32process
+--include-package=win32security
+--include-package=winerror
+--include-package=pywintypes
+--include-package=pythoncom
+--include-package=win32com
+--include-package=win32com.client
+
+# ────────────────────────────────────────────────────────────
+#  Force include: psutil
+# ────────────────────────────────────────────────────────────
+--include-package=psutil
+
+# ────────────────────────────────────────────────────────────
+#  Data: assets (icons, images)
+# ────────────────────────────────────────────────────────────
+--include-data-dir=assets=assets
+
+# ────────────────────────────────────────────────────────────
+#  EXCLUDE: Unused Qt modules to reduce size
+#  These are pulled in by PySide6's __init__.py but not used
+# ────────────────────────────────────────────────────────────
+--nofollow-import-to=PySide6.Qt3DCore
+--nofollow-import-to=PySide6.Qt3DRender
+--nofollow-import-to=PySide6.Qt3DInput
+--nofollow-import-to=PySide6.Qt3DLogic
+--nofollow-import-to=PySide6.Qt3DExtras
+--nofollow-import-to=PySide6.Qt3DAnimation
+--nofollow-import-to=PySide6.QtBluetooth
+--nofollow-import-to=PySide6.QtCharts
+--nofollow-import-to=PySide6.QtDataVisualization
+--nofollow-import-to=PySide6.QtDesigner
+--nofollow-import-to=PySide6.QtHelp
+--nofollow-import-to=PySide6.QtMultimedia
+--nofollow-import-to=PySide6.QtMultimediaWidgets
+--nofollow-import-to=PySide6.QtNetworkAuth
+--nofollow-import-to=PySide6.QtNfc
+--nofollow-import-to=PySide6.QtPositioning
+--nofollow-import-to=PySide6.QtLocation
+--nofollow-import-to=PySide6.QtPrintSupport
+--nofollow-import-to=PySide6.QtQml
+--nofollow-import-to=PySide6.QtQuick
+--nofollow-import-to=PySide6.QtQuickWidgets
+--nofollow-import-to=PySide6.QtRemoteObjects
+--nofollow-import-to=PySide6.QtSensors
+--nofollow-import-to=PySide6.QtSerialPort
+--nofollow-import-to=PySide6.QtSql
+--nofollow-import-to=PySide6.QtTest
+--nofollow-import-to=PySide6.QtTextToSpeech
+--nofollow-import-to=PySide6.QtWebChannel
+--nofollow-import-to=PySide6.QtWebEngine
+--nofollow-import-to=PySide6.QtWebEngineCore
+--nofollow-import-to=PySide6.QtWebEngineWidgets
+--nofollow-import-to=PySide6.QtWebSockets
+--nofollow-import-to=PySide6.QtXml
+
+# ────────────────────────────────────────────────────────────
+#  EXCLUDE: Unused stdlib modules to reduce size
+# ────────────────────────────────────────────────────────────
+--nofollow-import-to=tkinter
+--nofollow-import-to=unittest
+--nofollow-import-to=xmlrpc
+--nofollow-import-to=pydoc
+--nofollow-import-to=doctest
+--nofollow-import-to=asyncio
+--nofollow-import-to=email
+--nofollow-import-to=html
+--nofollow-import-to=xml.dom
+--nofollow-import-to=xml.sax
+--nofollow-import-to=lib2to3
+# multiprocessing: DO NOT exclude - concurrent.futures.ProcessPoolExecutor
+# depends on it; Nuitka raises FATAL conflict if excluded
+
+# ────────────────────────────────────────────────────────────
+#  EXCLUDE: Unused third-party modules
+# ────────────────────────────────────────────────────────────
+--nofollow-import-to=pip
+--nofollow-import-to=setuptools
+--nofollow-import-to=wheel
+--nofollow-import-to=distutils
+
+# ── Compile progress ─────────────────────────────────────────
+# --show-progress
+# --show-memory

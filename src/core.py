@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # windowmanager/core.py
 """
 窗口管理器 - 核心模块
@@ -12,28 +13,11 @@ from typing import Optional, List, Tuple, Dict
 
 from utils import win32_error_handler
 from window_base import WindowState, MonitorInfo, WindowInfo, WindowInfoParams
+from window_models import SimpleWindowInfo
+from deps import PSUTIL_AVAILABLE, psutil, WIN32_AVAILABLE, win32gui, win32con, win32process, win32api
+from constants import WindowConstants
 
 logger = logging.getLogger(__name__)
-
-try:
-    import win32gui
-    import win32con
-    import win32process
-    import win32api
-
-    WIN32_AVAILABLE = True
-except ImportError:
-    WIN32_AVAILABLE = False
-    win32gui = win32con = win32process = win32api = None
-
-# 尝试导入 psutil（可选依赖）
-try:
-    import psutil
-
-    PSUTIL_AVAILABLE = True
-except ImportError:
-    psutil = None
-    PSUTIL_AVAILABLE = False
 
 
 class SafeWindowsAPI:
@@ -62,17 +46,8 @@ class SafeWindowsAPI:
             ("szDevice", ctypes.c_char * 32),
         ]
 
-    EXCLUDED_CLASSES = {
-        "Progman",
-        "WorkerW",
-        "Shell_TrayWnd",
-        "Button",
-        "tooltips_class32",
-        "MSCTFIME UI",
-        "IME",
-        "OleMainThreadWndClass",
-    }
-    EXCLUDED_TITLES = {"", "Program Manager", "Settings"}
+    EXCLUDED_CLASSES = WindowConstants.EXCLUDED_CLASSES
+    EXCLUDED_TITLES = WindowConstants.EXCLUDED_TITLES
 
     @staticmethod
     @win32_error_handler(default=False, log_level="debug")
@@ -121,9 +96,9 @@ class SafeWindowsAPI:
                    False 表示被 WinHide 隐藏
         """
         if not WIN32_AVAILABLE:
-            return True
+            return False
         style = win32gui.GetWindowLong(hwnd, win32con.GWL_STYLE)
-        return bool(style & 0x10000000)
+        return bool(style & win32con.WS_VISIBLE)
 
     @staticmethod
     @win32_error_handler(default="", log_level="debug")
@@ -220,7 +195,7 @@ class SafeWindowsAPI:
         excluded_classes = SafeWindowsAPI.EXCLUDED_CLASSES
         excluded_titles = SafeWindowsAPI.EXCLUDED_TITLES
 
-        def callback(hwnd, _):
+        def callback(hwnd, _lparam):
             try:
                 # 检查窗口是否有效
                 if not SafeWindowsAPI.is_window(hwnd):
@@ -261,6 +236,71 @@ class SafeWindowsAPI:
             # 返回已枚举的窗口列表
             pass
         return windows
+
+    @staticmethod
+    def enum_all_windows() -> List['WindowInfo']:
+        """枚举所有窗口（包括隐藏窗口），返回 WindowInfo 列表
+
+        与 enum_windows() 不同，此方法包含不可见窗口，
+        用于配置恢复时查找匹配的隐藏窗口。
+
+        返回:
+            List[WindowInfo] - 窗口信息列表
+        """
+        if not WIN32_AVAILABLE:
+            return []
+
+        excluded_classes = SafeWindowsAPI.EXCLUDED_CLASSES
+        excluded_titles = SafeWindowsAPI.EXCLUDED_TITLES
+        results: List['WindowInfo'] = []
+
+        def callback(hwnd, _lparam):
+            try:
+                if not SafeWindowsAPI.is_window(hwnd):
+                    return True
+                if win32gui.GetParent(hwnd) != 0:
+                    return True
+
+                class_name = SafeWindowsAPI.get_window_class(hwnd)
+                title = SafeWindowsAPI.get_window_text(hwnd)
+
+                if class_name in excluded_classes:
+                    return True
+                if title in excluded_titles:
+                    return True
+                if not title:
+                    return True
+
+                is_visible = SafeWindowsAPI.window_has_visible_style(hwnd)
+                _, pid = SafeWindowsAPI.get_window_thread_process_id(hwnd)
+                process_name = SafeWindowsAPI.get_process_name(pid)
+
+                if is_visible:
+                    state = WindowState.NORMAL
+                else:
+                    state = WindowState.HIDDEN
+
+                win_info = SafeWindowsAPI.create_window_info(
+                    hwnd,
+                    title=title,
+                    class_name=class_name,
+                    pid=pid,
+                    state=state,
+                    is_visible=is_visible,
+                    process_name=process_name,
+                    is_foreground=False,
+                )
+                results.append(win_info)
+            except Exception as e:
+                logger.debug("enum_all_windows 回调出错: %s", str(e))
+            return True
+
+        try:
+            win32gui.EnumWindows(callback, None)
+        except Exception as e:
+            logger.debug("enum_all_windows 出错: %s", str(e))
+
+        return results
 
     @staticmethod
     @win32_error_handler(default=None, log_level="debug")
@@ -357,7 +397,7 @@ class SafeWindowsAPI:
         if isinstance(hwnd_or_params, WindowInfoParams):
             params = hwnd_or_params
             return SafeWindowsAPI.create_window_info(
-                hwnd=params.hwnd,
+                params.hwnd,
                 title=params.title,
                 class_name=params.class_name,
                 pid=params.pid,
@@ -369,7 +409,7 @@ class SafeWindowsAPI:
                 process_name=params.process_name,
                 is_taskbar=params.is_taskbar,
             )
-        
+
         # 处理传统参数方式
         hwnd = hwnd_or_params
         title = title or SafeWindowsAPI.get_window_text(hwnd)
@@ -403,16 +443,21 @@ class SafeWindowsAPI:
             str - 进程名称
         """
         if pid <= 0:
-            return "unknown"
+            return WindowConstants.UNKNOWN_PROCESS_NAME
 
         import time
 
         current_time = time.time()
 
-        # 定期清理过期缓存（节流：每 60 秒最多清理一次）
-        if current_time - SafeWindowsAPI._last_cleanup_time >= SafeWindowsAPI._cleanup_interval:
+        # 定期清理过期缓存（节流：每 60 秒最多清理一次，在锁内更新时间戳避免竞态）
+        with SafeWindowsAPI._cache_lock:
+            if current_time - SafeWindowsAPI._last_cleanup_time >= SafeWindowsAPI._cleanup_interval:
+                SafeWindowsAPI._last_cleanup_time = current_time
+                should_cleanup = True
+            else:
+                should_cleanup = False
+        if should_cleanup:
             SafeWindowsAPI._cleanup_expired_cache()
-            SafeWindowsAPI._last_cleanup_time = current_time
 
         # 检查缓存
         with SafeWindowsAPI._cache_lock:
@@ -422,7 +467,7 @@ class SafeWindowsAPI:
                 if current_time - timestamp < SafeWindowsAPI._cache_timeout:
                     return process_name
 
-        process_name = "unknown"
+        process_name = WindowConstants.UNKNOWN_PROCESS_NAME
 
         # 优先使用 psutil（更可靠）
         if PSUTIL_AVAILABLE and psutil is not None:
@@ -433,7 +478,7 @@ class SafeWindowsAPI:
                 logger.debug("get_process_name (psutil) 出错: %s", str(e))
 
         # 备选方案：使用 win32 API
-        if process_name == "unknown" and WIN32_AVAILABLE:
+        if process_name == WindowConstants.UNKNOWN_PROCESS_NAME and WIN32_AVAILABLE:
             try:
                 handle = win32api.OpenProcess(
                     win32con.PROCESS_QUERY_INFORMATION, False, pid)
@@ -481,26 +526,6 @@ class SafeWindowsAPI:
             return None
         return win32gui.GetWindowPlacement(hwnd)
 
-    @staticmethod
-    def get_class_name(hwnd: int) -> str:
-        """获取窗口类名（兼容别名）
-
-        .. deprecated::
-            请使用 :meth:`get_window_class` 代替
-
-        参数:
-            hwnd: int - 窗口句柄
-
-        返回:
-            str - 窗口类名
-        """
-        import warnings
-
-        warnings.warn(
-            "get_class_name 已弃用，请使用 get_window_class", DeprecationWarning, stacklevel=2
-        )
-        return SafeWindowsAPI.get_window_class(hwnd)
-
     # 显示器信息缓存
     _monitors_cache: Optional[List[MonitorInfo]] = None
     _monitors_last_update: float = 0
@@ -534,7 +559,7 @@ class SafeWindowsAPI:
             # 使用 ctypes 来获取显示器信息，这是一种更可靠的方法
             import ctypes
 
-            def monitor_callback(hmonitor, hdc, lprect, dwData):
+            def monitor_callback(hmonitor, _hdc, _lprect, _dwData):
                 nonlocal monitor_id
 
                 info = SafeWindowsAPI._MONITORINFOEX()
@@ -576,7 +601,7 @@ class SafeWindowsAPI:
             # 回退到 win32gui 方法
             try:
 
-                def win32_callback(hmonitor, hdc, rect, data):
+                def win32_callback(_hmonitor, _hdc, rect, _data):
                     nonlocal monitor_id
                     left, top, right, bottom = rect
 
@@ -618,64 +643,39 @@ class SafeWindowsAPI:
         返回:
             Optional[MonitorInfo] - 显示器信息或 None
         """
-        logger.debug("get_window_monitor 被调用，hwnd: %d", hwnd)
         if not WIN32_AVAILABLE:
-            logger.debug("WIN32_AVAILABLE is False")
             return None
 
         try:
-            logger.debug("Calling MonitorFromWindow for hwnd: %d", hwnd)
-            # 使用 ctypes 调用 MonitorFromWindow API
             user32 = ctypes.windll.user32
             MONITOR_DEFAULTTOPRIMARY = 1
             hmonitor = user32.MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY)
 
             if not hmonitor:
-                logger.debug("MonitorFromWindow 返回无效句柄: %d", hwnd)
+                logger.debug("MonitorFromWindow 返回无效句柄: hwnd=%d", hwnd)
                 return None
-            logger.debug("Got monitor handle: %d", hmonitor)
 
-            logger.debug(
-                "Calling GetMonitorInfo for monitor handle: %d", hmonitor)
-
-            # 使用 ctypes 调用 GetMonitorInfo API
             info = SafeWindowsAPI._MONITORINFO()
             info.cbSize = ctypes.sizeof(SafeWindowsAPI._MONITORINFO)
-            logger.debug(
-                "Calling GetMonitorInfoA with info.cbSize: %d", info.cbSize)
             success = user32.GetMonitorInfoA(hmonitor, ctypes.byref(info))
-            logger.debug("GetMonitorInfoA 返回: %s", success)
 
             is_primary = False
             left, top, right, bottom = 0, 0, 0, 0
 
             if success:
-                # 解析显示器矩形
                 left, top, right, bottom = info.rcMonitor
-                logger.debug(
-                    "Monitor rect: left=%d, top=%d, right=%d, bottom=%d", left, top, right, bottom
-                )
-
-                # 判断是否为主显示器：dwFlags & 1 == 1 代表主显示器
                 is_primary = (info.dwFlags & 1) == 1
-                logger.debug("Monitor flags: %d, is_primary: %s",
-                             info.dwFlags, is_primary)
             else:
-                # GetMonitorInfo 失败，使用默认值
-                logger.debug("GetMonitorInfo 失败，使用默认值")
+                logger.debug("GetMonitorInfo 失败，hwnd=%d", hwnd)
 
-            # 从缓存的显示器列表中查找匹配项，以获取 monitor_id
             monitors = SafeWindowsAPI.enum_monitors()
-            logger.debug("Found %d monitors in enum_monitors", len(monitors))
             monitor_id = 0
-            for i, m in enumerate(monitors):
+            for m in monitors:
                 if m.left == left and m.top == top and m.right == right and m.bottom == bottom:
                     monitor_id = m.monitor_id
-                    logger.debug(
-                        "Found matching monitor with id: %d", monitor_id)
                     break
 
-            result = MonitorInfo(
+            return MonitorInfo(
                 monitor_id=monitor_id,
                 left=left,
                 top=top,
@@ -683,8 +683,6 @@ class SafeWindowsAPI:
                 bottom=bottom,
                 is_primary=is_primary,
             )
-            logger.debug("Created MonitorInfo: %s", result)
-            return result
 
         except Exception as e:
             logger.error("get_window_monitor 出错: %s", str(e))
@@ -767,6 +765,43 @@ class SafeWindowsAPI:
             return False
 
     @staticmethod
+    def get_parent(hwnd: int) -> int:
+        """获取窗口的父窗口句柄
+
+        参数:
+            hwnd: int - 窗口句柄
+
+        返回:
+            int - 父窗口句柄，0表示顶级窗口
+        """
+        if not WIN32_AVAILABLE:
+            return 0
+        try:
+            return win32gui.GetParent(hwnd)
+        except Exception:
+            return 0
+
+    @staticmethod
+    def set_window_placement(hwnd: int, placement) -> bool:
+        """设置窗口的位置和状态信息
+
+        参数:
+            hwnd: int - 窗口句柄
+            placement: 窗口放置信息（win32gui.GetWindowPlacement 返回值格式）
+
+        返回:
+            bool - 是否设置成功
+        """
+        if not WIN32_AVAILABLE:
+            return False
+        try:
+            win32gui.SetWindowPlacement(hwnd, placement)
+            return True
+        except Exception as e:
+            logger.debug("set_window_placement 出错: %s", str(e))
+            return False
+
+    @staticmethod
     @win32_error_handler(default=False, log_level="debug")
     def is_taskbar_window(hwnd: int) -> bool:
         """检查窗口是否在任务栏中显示
@@ -779,6 +814,164 @@ class SafeWindowsAPI:
         """
         # 现在使用ALT+TAB可见窗口的判断逻辑
         return SafeWindowsAPI.is_alt_tab_window(hwnd)
+
+    @staticmethod
+    def is_super_window(hwnd: int) -> bool:
+        """判断窗口是否为超级窗口（主应用窗口）
+
+        超级窗口 = 满足以下全部条件的顶层窗口:
+          - IsWindow 有效
+          - 非 WS_EX_TOOLWINDOW（非工具窗口）
+          - 非子窗口（无 owner，或 WS_EX_APPWINDOW 窗口例外）
+          - WS_OVERLAPPEDWINDOW 或 WS_EX_APPWINDOW（主应用窗口样式）
+          - 对于 WS_OVERLAPPEDWINDOW 窗口：必须有最小化/最大化按钮，且非 POPUP
+          - 标题非空
+          - 尺寸非 0x0
+
+        参数:
+            hwnd: int - 窗口句柄
+
+        返回:
+            bool - 是否为超级窗口
+        """
+        if not WIN32_AVAILABLE:
+            return False
+
+        try:
+            if not win32gui.IsWindow(hwnd):
+                return False
+
+            style = win32gui.GetWindowLong(hwnd, win32con.GWL_STYLE)
+            ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+
+            if ex_style & win32con.WS_EX_TOOLWINDOW:
+                return False
+
+            owner = win32gui.GetWindow(hwnd, win32con.GW_OWNER)
+            has_appwindow = ex_style & win32con.WS_EX_APPWINDOW
+            if owner and not has_appwindow:
+                return False
+
+            has_overlapped = style & win32con.WS_OVERLAPPEDWINDOW
+            if not has_overlapped and not has_appwindow:
+                return False
+
+            if has_overlapped and (not (style & win32con.WS_MINIMIZEBOX) or not (style & win32con.WS_MAXIMIZEBOX)):
+                return False
+
+            if has_overlapped and (style & win32con.WS_POPUP):
+                return False
+
+            title = win32gui.GetWindowText(hwnd)
+            if not title:
+                return False
+
+            try:
+                left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+                width, height = right - left, bottom - top
+                if width <= 0 or height <= 0:
+                    return False
+            except Exception:
+                return False
+
+            return True
+        except Exception as e:
+            logger.debug("is_super_window 出错: %s", str(e))
+            return False
+
+    @staticmethod
+    def enum_super_windows() -> Tuple[List, List]:
+        """枚举超级窗口和可见主应用窗口
+
+        超级窗口 = 满足以下全部条件的顶层窗口（含隐藏+可见）:
+          - IsWindow 有效
+          - 非 WS_EX_TOOLWINDOW
+          - 非子窗口（WS_EX_APPWINDOW 例外）
+          - WS_OVERLAPPEDWINDOW 或 WS_EX_APPWINDOW
+          - 标题非空，尺寸非 0x0
+
+        可见主应用窗口 = 超级窗口中当前可见的子集
+
+        返回:
+            Tuple[List[SimpleWindowInfo], List[SimpleWindowInfo]] - (超级窗口列表, 可见主应用窗口列表)
+        """
+        if not WIN32_AVAILABLE:
+            return [], []
+
+        candidate_hwnds = []
+
+        def callback(hwnd, _extra):
+            if SafeWindowsAPI.is_super_window(hwnd):
+                candidate_hwnds.append(hwnd)
+            return True
+
+        try:
+            win32gui.EnumWindows(callback, None)
+        except Exception as e:
+            logger.debug("enum_super_windows EnumWindows 出错: %s", str(e))
+
+        pid_name_map = {}
+        try:
+            for proc in psutil.process_iter(["pid", "name"]):
+                try:
+                    pid_name_map[proc.info["pid"]] = proc.info["name"]
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+        except Exception:
+            pass
+
+        super_windows = []
+        for h in candidate_hwnds:
+            info = SafeWindowsAPI._build_simple_window_info(h, pid_name_map)
+            if info:
+                super_windows.append(info)
+
+        visible_app_windows = [w for w in super_windows if w.is_visible]
+
+        return super_windows, visible_app_windows
+
+    @staticmethod
+    def _build_simple_window_info(hwnd: int, pid_name_map: dict = None):
+        """构建 SimpleWindowInfo 对象（供 enum_super_windows 使用）
+
+        参数:
+            hwnd: int - 窗口句柄
+            pid_name_map: dict - 预构建的 PID→进程名 缓存
+
+        返回:
+            SimpleWindowInfo 或 None
+        """
+        try:
+            title = win32gui.GetWindowText(hwnd)
+            class_name = win32gui.GetClassName(hwnd)
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+
+            if pid_name_map and pid in pid_name_map:
+                process_name = pid_name_map[pid]
+            elif pid > 0:
+                try:
+                    process_name = psutil.Process(pid).name()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    process_name = WindowConstants.UNKNOWN_PROCESS_DISPLAY_NAME
+                except Exception:
+                    process_name = WindowConstants.ERROR_PROCESS_NAME
+            else:
+                process_name = WindowConstants.SYSTEM_PROCESS_NAME
+
+            is_visible = bool(win32gui.GetWindowLong(hwnd, win32con.GWL_STYLE) & win32con.WS_VISIBLE)
+
+            return SimpleWindowInfo(
+                hwnd=hwnd,
+                title=title,
+                class_name=class_name,
+                pid=pid,
+                process_name=process_name,
+                is_visible=is_visible,
+                is_taskbar=True,
+            )
+        except Exception as e:
+            logger.debug("_build_simple_window_info 出错: %s", str(e))
+            return None
 
     @staticmethod
     def enum_hidden_windows() -> List[int]:
@@ -802,7 +995,7 @@ class SafeWindowsAPI:
         hidden_windows = []
         excluded_classes = SafeWindowsAPI.EXCLUDED_CLASSES
 
-        def callback(hwnd, _):
+        def callback(hwnd, _lparam):
             try:
                 if not SafeWindowsAPI.is_window(hwnd):
                     return True
@@ -854,7 +1047,7 @@ class SafeWindowsAPI:
             return 0
         count = [0]
 
-        def callback(hwnd, _):
+        def callback(_hwnd, _lparam):
             count[0] += 1
             return True
 
@@ -930,7 +1123,7 @@ class SafeWindowsAPI:
         results = []
         excluded_classes = SafeWindowsAPI.EXCLUDED_CLASSES
 
-        def callback(hwnd, _):
+        def callback(hwnd, _lparam):
             try:
                 if not win32gui.IsWindow(hwnd):
                     return True
@@ -956,11 +1149,11 @@ class SafeWindowsAPI:
 
                 # 通过 WS_VISIBLE 样式位判断可见性（与 AHK WinHide 一致）
                 style = win32gui.GetWindowLong(hwnd, win32con.GWL_STYLE)
-                is_visible = bool(style & 0x10000000)
+                is_visible = bool(style & win32con.WS_VISIBLE)
 
                 # 获取进程名
                 process_name = SafeWindowsAPI.get_process_name(
-                    pid) if pid else "unknown"
+                    pid) if pid else WindowConstants.UNKNOWN_PROCESS_NAME
 
                 # 获取窗口位置
                 rect = SafeWindowsAPI.get_window_rect(hwnd)
@@ -1018,7 +1211,7 @@ class SafeWindowsAPI:
         total = [0]
         checked = [0]
 
-        def callback(hwnd, _):
+        def callback(hwnd, _lparam):
             if cancel_event and cancel_event.is_set():
                 return False  # 停止枚举
 
@@ -1058,7 +1251,7 @@ class SafeWindowsAPI:
                 # 获取进程信息
                 _, pid = SafeWindowsAPI.get_window_thread_process_id(hwnd)
                 process_name = SafeWindowsAPI.get_process_name(
-                    pid) if pid else "unknown"
+                    pid) if pid else WindowConstants.UNKNOWN_PROCESS_NAME
 
                 # 获取窗口位置（隐藏的窗口返回 0x0）
                 rect = SafeWindowsAPI.get_window_rect(hwnd)

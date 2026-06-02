@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 时间设置部件
 PySide6版本
@@ -15,7 +16,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QGroupBox,
-    QCheckBox,
     QMessageBox,
 )
 from PySide6.QtCore import Signal, QTimer
@@ -23,6 +23,7 @@ from PySide6.QtGui import QFont
 
 
 from time_sync import TimeSyncTool, SyncResult, SystemTimeSetter
+from constants import TimeoutConstants
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +75,7 @@ class TimeSettingsWidget(QWidget):
         self._update_current_time()
         self._time_timer = QTimer()
         self._time_timer.timeout.connect(self._update_current_time)
-        self._time_timer.start(1000)  # 每秒更新一次
+        self._time_timer.start(TimeoutConstants.TIME_DISPLAY_UPDATE_INTERVAL_MS)  # 每秒更新一次
 
         # 连接 NTP 结果信号
         self.ntp_result_ready.connect(self._on_ntp_result)
@@ -94,7 +95,7 @@ class TimeSettingsWidget(QWidget):
         self.auto_calibration_timer.timeout.connect(self._auto_calibrate)
         # 启动自动校准，60秒间隔
         self.auto_calibration_enabled = True
-        self.auto_calibration_timer.start(60000)
+        self.auto_calibration_timer.start(TimeoutConstants.AUTO_CALIBRATION_INTERVAL_MS)
         logger.info("已启动自动时间校准，间隔60秒")
 
     def _init_ui(self) -> None:
@@ -183,11 +184,10 @@ class TimeSettingsWidget(QWidget):
         return ntp_btn_layout
 
     def _init_ntp_options(self, layout: QVBoxLayout) -> None:
-        """初始化 NTP 选项"""
-        # NTP 日志选项
-        self.enable_ntp_log_check = QCheckBox("记录 NTP 同步日志")
-        self.enable_ntp_log_check.setChecked(True)
-        layout.addWidget(self.enable_ntp_log_check)
+        """初始化 NTP 选项
+        注：NTP 日志开关已统一移至"关于"选项卡，此处不再重复。
+        """
+        pass  # 预留接口，便于将来扩展其他 NTP 相关选项
 
     def _save_config(self) -> None:
         """保存配置（占位符）"""
@@ -281,12 +281,12 @@ class TimeSettingsWidget(QWidget):
             self.ntp_time_label.setStyleSheet(
                 "color: #4CAF50; font-weight: bold;")
 
-            if self.enable_ntp_log_check.isChecked():
-                logger.info(
-                    "NTP 时间获取成功：%s，时间差：%.2f 毫秒",
-                    ntp_time_str,
-                    time_diff_ms,
-                )
+            # NTP 日志已由"关于"选项卡统一管理，此处不再记录
+            logger.debug(
+                "NTP 时间获取成功：%s，时间差：%.2f 毫秒",
+                ntp_time_str,
+                time_diff_ms,
+            )
         else:
             self.ntp_time_label.setText(f"获取失败: {result.message}")
             self.ntp_time_label.setStyleSheet(

@@ -1,14 +1,10 @@
-# windowmanager/__init__.py
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-Window Manager - 简化版
+窗口管理器模块初始化
 """
-from .constants import __version__
 
-__all__ = [
-    "WindowInfo",
-    "WindowState",
-    "SafeWindowsAPI",
-    "WindowManager",
-    "MainWindow",
-    "main"
-]
+__version__ = "1.0.0"
+__author__ = "Window Manager Team"
+
+# 导出主要组件

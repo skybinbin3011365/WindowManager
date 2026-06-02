@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # windowmanager/app.py
 """
 应用程序入口模块
@@ -6,14 +7,30 @@
 
 import sys
 import os
-import logging
-import ctypes
-import atexit
-import signal
-from pathlib import Path
 
-# 设置基础目录（保留对PyInstaller打包的支持）
-if getattr(sys, "frozen", False):
+# 强制启用 UTF-8 模式（Nuitka 编译后的 exe 在 Windows 中文环境下可能默认使用 GBK）
+# 此设置等效于环境变量 PYTHONUTF8=1 或命令行参数 -X utf8
+# 必须在所有其他导入之前执行，确保后续所有文件 I/O 使用 UTF-8 编码
+os.environ["PYTHONUTF8"] = "1"
+
+# 仅在开发环境下修改 sys.path（打包后模块已内嵌，无需动态添加路径）
+if not getattr(sys, "frozen", False) and not hasattr(sys, "__nuitka_binary__"):
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    sys.path.append(os.getcwd())
+
+import logging  # noqa: E402
+import ctypes  # noqa: E402
+import atexit  # noqa: E402
+import signal  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+# 统一的打包环境检测（兼容 PyInstaller 和 Nuitka）
+# PyInstaller 设置 sys.frozen = True
+# Nuitka 设置 sys.frozen = True 且存在 __nuitka_binary__ 属性
+IS_FROZEN = getattr(sys, "frozen", False) or hasattr(sys, "__nuitka_binary__")
+
+if IS_FROZEN:
+    # 打包后的路径：exe 所在目录
     BASE_DIR = Path(sys.executable).parent
 else:
     PROJECT_ROOT = Path(__file__).parent.parent.absolute()
@@ -21,7 +38,7 @@ else:
 
 # 配置日志（尽早创建日志目录，在 setup_logging() 之前就设置简单的文件日志）
 # 这是为了捕获 PySide6 导入时可能发生的错误
-_fallback_log = BASE_DIR / "logs" / "windowmanager.log"
+_fallback_log = BASE_DIR / "logs" / "window_manager.log"
 _fallback_log.parent.mkdir(parents=True, exist_ok=True)
 
 # 在模块级别就设置简单的文件日志，确保即使在导入阶段崩溃也能记录错误
@@ -35,21 +52,38 @@ except Exception:
     # 如果连文件日志都无法创建，就没办法记录错误了
     pass
 
-# 检测是否在打包环境中运行
-IS_FROZEN = getattr(sys, "frozen", False)
+# 检测是否在打包环境中运行（已在文件顶部定义 IS_FROZEN）
 logger = logging.getLogger(__name__)
+
+# Win32 MessageBox 常量（app.py 不依赖 win32con，此处定义局部常量）
+_MB_OK = 0x00000000
+_MB_YESNO = 0x00000004
+_MB_ICONERROR = 0x00000010
+_MB_ICONWARNING = 0x00000030
+_MB_ICONINFORMATION = 0x00000040
+_IDYES = 6
 
 if IS_FROZEN:
     logger.info("检测到打包环境")
 
 try:
-    from ui import AppWindow
-    from manager import WindowManager
-    from constants import AppConstants
-    from utils import setup_logging, is_admin
-    from config import ConfigManager
+    try:
+        from ui import AppWindow
+        from manager import WindowManager
+        from constants import AppConstants
+        from utils import setup_logging, is_admin
+        from config import ConfigManager
+    except ImportError as e1:
+        logger.warning("直接导入失败 (%s)，尝试 src. 前缀导入...", e1)
+        from src.ui import AppWindow
+        from src.manager import WindowManager
+        from src.constants import AppConstants
+        from src.utils import setup_logging, is_admin
+        from src.config import ConfigManager
 except ImportError as e:
-    logger.error("导入失败: %s", str(e))
+    logger.error("导入失败: %s", str(e), exc_info=True)
+    logger.error("sys.path: %s", sys.path[:5])
+    logger.error("sys.modules keys (partial): %s", list(sys.modules.keys())[:20])
     sys.exit(1)
 
 # 全局互斥体引用
@@ -109,7 +143,7 @@ def is_already_running():
             # 显示弹出提示
             try:
                 ctypes.windll.user32.MessageBoxW(
-                    0, f"{AppConstants.APP_TITLE}已经在运行中！", "提示", 0x40 | 0x1
+                    0, f"{AppConstants.APP_TITLE}已经在运行中！", "提示", _MB_ICONINFORMATION | _MB_OK
                 )
             except Exception as msg_error:
                 logger.error("显示提示框失败: %s", str(msg_error))
@@ -126,7 +160,7 @@ def is_already_running():
         return False
 
 
-def force_exit(signum, frame):
+def force_exit(_signum, _frame):
     """强制退出处理函数"""
     logger.warning("收到强制退出信号")
     global _app_window, _qt_app
@@ -187,39 +221,122 @@ def prompt_admin_elevation() -> bool:
             "是否立即提升权限并重启程序？\n\n"
             '点击"是"提升权限，点击"否"以有限权限继续运行（部分功能可能受限）。',
             "权限提升请求",
-            0x24 | 0x40  # MB_YESNO | MB_ICONINFORMATION
+            _MB_YESNO | _MB_ICONINFORMATION
         )
-        return result == 6  # IDYES
+        return result == _IDYES
     except Exception as e:
         logger.error("显示权限提升对话框失败: %s", e)
         return False
 
 
 def handle_uncaught_exception(exc_type, exc_value, exc_traceback):
-    """全局未捕获异常处理函数"""
+    """全局未捕获异常处理函数 - 增强版，防止程序退出"""
     if issubclass(exc_type, KeyboardInterrupt):
-        # 忽略键盘中断，让正常的退出流程处理
         sys.__excepthook__(exc_type, exc_value, exc_traceback)
         return
 
-    # 记录异常到日志
     logger.critical("未捕获的异常:", exc_info=(exc_type, exc_value, exc_traceback))
 
-    # 尝试使用 MessageBox 显示错误信息（不依赖 Qt）
     try:
-        error_message = f"程序发生未捕获的异常:\n\n{exc_type.__name__}: {exc_value}\n\n请查看日志文件获取详细信息。"
-        ctypes.windll.user32.MessageBoxW(
-            None, error_message, "错误", 0x10 | 0x1  # MB_ICONERROR | MB_OK
+        error_message = (
+            f"程序发生未捕获的异常:\n\n"
+            f"{exc_type.__name__}: {exc_value}\n\n"
+            f"程序将尝试继续运行。"
         )
+        # 优先使用 Qt 消息框（主线程中更友好）
+        try:
+            from PySide6.QtWidgets import QApplication, QMessageBox
+            if QApplication.instance():
+                QMessageBox.critical(None, "错误", error_message)
+            else:
+                ctypes.windll.user32.MessageBoxW(None, error_message, "错误", _MB_ICONERROR | _MB_OK)
+        except Exception:
+            ctypes.windll.user32.MessageBoxW(None, error_message, "错误", _MB_ICONERROR | _MB_OK)
+
+        # 尝试恢复关键服务
+        try:
+            if _app_window and hasattr(_app_window, 'hotkey_manager'):
+                _app_window.hotkey_manager.check_health()
+        except Exception as recover_error:
+            logger.error("恢复热键服务失败: %s", str(recover_error))
+
     except Exception as msg_error:
         logger.error("显示错误消息失败: %s", msg_error)
+
+
+def _check_admin_privileges():
+    """检查并尝试提升管理员权限
+
+    返回:
+        int: 0 表示继续运行，1 表示应退出（权限提升成功后新实例启动）
+    """
+    if not is_admin():
+        logger.info("未以管理员权限运行，尝试提升权限...")
+        if prompt_admin_elevation():
+            if run_as_admin():
+                logger.info("已提升为管理员权限，当前实例将退出")
+                return 1
+            logger.warning("提升管理员权限失败，继续以有限权限运行")
+        else:
+            logger.info("用户取消权限提升，继续以有限权限运行")
+    else:
+        logger.info("正在以管理员权限运行")
+    return 0
+
+
+def _check_elevation_result():
+    """检查权限提升结果，如果失败则显示警告"""
+    if "--admin-elevation-attempted" not in sys.argv:
+        return
+    if is_admin():
+        return
+    logger.warning("权限提升未成功，程序将以有限权限运行，部分功能可能受限")
+    try:
+        warning_message = (
+            "权限提升未成功，程序将以有限权限运行。\n\n部分窗口管理功能可能无法正常工作。"
+        )
+        ctypes.windll.user32.MessageBoxW(
+            None, warning_message, "权限警告", _MB_ICONWARNING | _MB_OK
+        )
+    except Exception as msg_error:
+        logger.error("显示权限警告失败: %s", msg_error)
+
+
+def _init_window_manager(qt_app):
+    """初始化窗口管理器和主窗口
+
+    参数:
+        qt_app: QApplication 实例
+
+    返回:
+        tuple: (window_manager, main_window) 或 (None, None) 如果失败
+    """
+    window_manager = WindowManager()
+
+    logger.info("正在初始化窗口管理器缓存...")
+    window_manager.init_cache()
+
+    logger.info("正在检测隐藏窗口...")
+    config_manager = ConfigManager.get_instance()
+    config = config_manager.load()
+    keywords = config.filter.keywords
+    logger.info("使用关键字列表检测隐藏窗口: %s", keywords)
+    hidden_windows = window_manager.detect_target_windows(keywords)
+    if hidden_windows:
+        logger.info("检测到 %d 个隐藏窗口，已添加到选中窗口列表", len(hidden_windows))
+    else:
+        logger.info("未检测到被隐藏的窗口")
+
+    main_window = AppWindow(window_manager)
+    logger.info("主窗口已初始化并显示")
+
+    return window_manager, main_window
 
 
 def main():
     """主函数 - PySide6版本"""
     from PySide6.QtWidgets import QApplication
 
-    # 设置全局未捕获异常钩子
     sys.excepthook = handle_uncaught_exception
 
     setup_logging()
@@ -228,43 +345,17 @@ def main():
     logger.info("=" * 50)
     logger.info("进程ID: %d", os.getpid())
 
-    if not is_admin():
-        logger.info("未以管理员权限运行，尝试提升权限...")
-        if prompt_admin_elevation():
-            if run_as_admin():
-                logger.info("已提升为管理员权限，当前实例将退出")
-                return 0
-            else:
-                logger.warning("提升管理员权限失败，继续以有限权限运行")
-        else:
-            logger.info("用户取消权限提升，继续以有限权限运行")
-    else:
-        logger.info("正在以管理员权限运行")
+    if _check_admin_privileges() != 0:
+        return 0
 
-    # 权限提升后验证：如果用户选择了提升权限，但当前实例仍不是管理员，说明提升失败
-    if "--admin-elevation-attempted" in sys.argv:
-        if not is_admin():
-            logger.warning("权限提升未成功，程序将以有限权限运行，部分功能可能受限")
-            try:
-                # 显示警告信息
-                warning_message = (
-                    "权限提升未成功，程序将以有限权限运行。\n\n部分窗口管理功能可能无法正常工作。"
-                )
-                ctypes.windll.user32.MessageBoxW(
-                    None, warning_message, "权限警告", 0x30 | 0x1  # MB_ICONWARNING | MB_OK
-                )
-            except Exception as msg_error:
-                logger.error("显示权限警告失败: %s", msg_error)
+    _check_elevation_result()
 
-    # 检查程序是否已经在运行
     if is_already_running():
         logger.info("应用程序已在运行，正在退出...")
         return 1
 
-    # 注册程序退出时清理互斥体（在确认不是重复运行后注册）
     atexit.register(cleanup_mutex)
 
-    # 注册信号处理，用于强制退出
     try:
         signal.signal(signal.SIGTERM, force_exit)
         signal.signal(signal.SIGINT, force_exit)
@@ -272,54 +363,54 @@ def main():
         logger.warning("注册信号处理程序失败: %s", str(e))
 
     try:
-        # 创建QApplication实例
         global _qt_app
         _qt_app = QApplication(sys.argv)
-
-        # 设置应用程序属性
         _qt_app.setApplicationName(AppConstants.APP_TITLE)
-        _qt_app.setQuitOnLastWindowClosed(False)  # 关闭窗口时不退出，最小化到托盘
+        _qt_app.setQuitOnLastWindowClosed(False)
 
-        # 创建窗口管理器
-        window_manager = WindowManager()
+        # 安装 Qt 事件循环异常过滤器，防止未捕获异常导致程序退出
+        def _qt_exception_hook(exc_type, exc_value, exc_tb):
+            logger.critical("Qt 事件循环未捕获异常:", exc_info=(exc_type, exc_value, exc_tb))
+            try:
+                if _app_window and hasattr(_app_window, 'hotkey_manager'):
+                    _app_window.hotkey_manager.check_health()
+            except Exception:
+                pass
 
-        # 初始化缓存，填充黑白名单
-        logger.info("正在初始化窗口管理器缓存...")
-        window_manager.init_cache()
+        from PySide6.QtCore import qInstallMessageHandler
 
-        # 自动检测隐藏窗口并将其添加到选中窗口列表
-        logger.info("正在检测隐藏窗口...")
-        # 加载配置，获取关键字列表
-        config_manager = ConfigManager.get_instance()
-        config = config_manager.load()
-        keywords = config.keywords
-        logger.info("使用关键字列表检测隐藏窗口: %s", keywords)
-        # 检测隐藏窗口（不恢复，只添加到列表）
-        hidden_windows = window_manager.recover_hidden_windows(keywords)
-        if hidden_windows:
-            logger.info("检测到 %d 个隐藏窗口，已添加到选中窗口列表", len(hidden_windows))
-        else:
-            logger.info("未检测到被隐藏的窗口")
+        def _qt_message_handler(msg_type, context, msg):
+            level_map = {
+                0: logging.DEBUG,
+                1: logging.WARNING,
+                2: logging.ERROR,
+                4: logging.INFO,
+            }
+            level = level_map.get(msg_type, logging.WARNING)
+            logger.log(level, "Qt 消息: %s", msg)
+        qInstallMessageHandler(_qt_message_handler)
 
-        # 创建主窗口
-        main_window = AppWindow(window_manager)
+        _, main_window = _init_window_manager(_qt_app)
         global _app_window
         _app_window = main_window
 
-        # 主窗口在初始化时已经显示
-        logger.info("主窗口已初始化并显示")
-
-        # 运行事件循环
         exit_code = _qt_app.exec()
-
         logger.info("窗口管理器正常退出，退出码: %d", exit_code)
         return exit_code
 
     except Exception as e:
         logger.critical("应用程序错误: %s", e, exc_info=True)
+        # 尝试恢复而不是直接退出
+        try:
+            if _app_window and hasattr(_app_window, 'hotkey_manager'):
+                _app_window.hotkey_manager.check_health()
+            logger.info("尝试从应用程序错误中恢复...")
+            if _qt_app:
+                return _qt_app.exec()
+        except Exception:
+            pass
         return 1
     finally:
-        # 确保互斥体被清理
         cleanup_mutex()
         _app_window = None
         _qt_app = None

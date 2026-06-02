@@ -1,0 +1,105 @@
+# ============================================================
+#  WinHide - Nuitka build arguments
+#
+#  This file is read by build.py (NOT by Nuitka directly).
+#  Nuitka does NOT support @response_file syntax.
+#
+#  Usage (from project root, venv activated):
+#
+#    python build.py          (any shell)
+#    build.bat                (any shell, calls build.py)
+#
+#  Lines starting with # are comments, blank lines are ignored.
+#  All other lines are passed as-is to Nuitka as CLI arguments.
+# ============================================================
+
+# ── 编译模式：生成可独立运行的目录（无需 Python 环境）────────
+--mode=standalone
+
+# ── 输出目录 ──────────────────────────────────────────────────
+--output-dir=dist_nuitka
+
+# ── 可执行文件名 ──────────────────────────────────────────────
+--output-filename=WinHide
+
+# ── GUI 程序：控制台模式（调试用，确认能跑后改回 disable）──
+--windows-console-mode=force
+
+# ── 运行时强制 UTF-8 模式 ───────────────────────────────────
+# Nuitka 的 --python-flag 不支持 -Xutf8，改用环境变量注入
+# 等效于 python -X utf8 或 PYTHONUTF8=1
+# 确保编译后的 exe 在 Windows 上默认使用 UTF-8 编码
+# 解决中文路径、配置文件读写、日志输出等编码问题
+--force-runtime-environment-variable=PYTHONUTF8=1
+
+# ── 应用图标 ──────────────────────────────────────────────────
+--windows-icon-from-ico=assets/WinHide2.ico
+
+# ── UAC：请求管理员权限（窗口操作 SendMessage 必须）──────────
+--windows-uac-admin
+
+# ────────────────────────────────────────────────────────────
+#  插件：PySide6（官方支持，自动收集 Qt 动态库）
+# ────────────────────────────────────────────────────────────
+--enable-plugin=pyside6
+
+# ────────────────────────────────────────────────────────────
+#  强制包含：shiboken6（PySide6 的 C 绑定层）
+#  PySide6/__init__.py 中 import Shiboken，缺失则启动即崩溃
+#  ⚠️ --include-package-data 不含 DLL，shiboken6.abi3.dll
+#     由 build.py 通过 --include-data-files 动态注入
+# ────────────────────────────────────────────────────────────
+--include-package=shiboken6
+
+# ────────────────────────────────────────────────────────────
+#  强制包含：pynput（ctypes 动态加载，静态分析无法追踪）
+# ────────────────────────────────────────────────────────────
+--include-package=pynput
+--include-package=pynput.keyboard
+--include-package=pynput.mouse
+
+# ────────────────────────────────────────────────────────────
+#  强制包含：pywin32 子模块
+#  部分模块通过字符串名称 import，Nuitka 无法静态追踪
+# ────────────────────────────────────────────────────────────
+--include-package=win32api
+--include-package=win32con
+--include-package=win32gui
+--include-package=win32process
+--include-package=win32security
+--include-package=winerror
+--include-package=pywintypes
+--include-package=pythoncom
+--include-package=win32com
+--include-package=win32com.client
+
+# ────────────────────────────────────────────────────────────
+#  强制包含：psutil（含 C 扩展按需加载）
+# ────────────────────────────────────────────────────────────
+--include-package=psutil
+
+# ────────────────────────────────────────────────────────────
+#  数据文件：配置文件放到 exe 同级目录
+# ────────────────────────────────────────────────────────────
+--include-data-files=config.json=./
+
+# ────────────────────────────────────────────────────────────
+#  数据目录：assets（图标、图片）
+# ────────────────────────────────────────────────────────────
+--include-data-dir=assets=assets
+
+# ────────────────────────────────────────────────────────────
+#  编译进度显示（可选，调试时开启）
+# ────────────────────────────────────────────────────────────
+# --show-progress
+# --show-memory
+
+# ────────────────────────────────────────────────────────────
+#  LTO 链接优化（可选，编译更慢但产物更小）
+# ────────────────────────────────────────────────────────────
+# --lto=yes
+
+# ────────────────────────────────────────────────────────────
+#  并发编译核心数（默认 auto，可手动指定）
+# ────────────────────────────────────────────────────────────
+# --jobs=4

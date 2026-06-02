@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # windowmanager/window_switch.py
 """
 切换窗口 Mixin - 包含 MainWindowTab 的切换窗口功能
@@ -11,35 +12,34 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt
 
-from window_base import WindowInfo, WindowState
 from core import SafeWindowsAPI
+from window_models import WindowEntry
+from deps import psutil, WIN32GUI_AVAILABLE, win32gui
 
 logger = logging.getLogger(__name__)
-
-try:
-    import psutil
-    PSUTIL_AVAILABLE = True
-except ImportError:
-    psutil = None
-    PSUTIL_AVAILABLE = False
-
-try:
-    import win32gui
-    WIN32GUI_AVAILABLE = True
-except ImportError:
-    win32gui = None
-    WIN32GUI_AVAILABLE = False
 
 
 class SwitchMixin:
     """切换窗口 Mixin - 提供切换窗口管理能力"""
 
-    def _update_switch_window_table(self) -> None:
-        """更新切换窗口表格，从配置中加载窗口列表并显示其状态"""
+    def _update_switch_window_table(self, visible_windows: list) -> None:
+        """更新切换窗口表格，基于可见窗口列表进行匹配
+
+        核心逻辑：
+        1. 在 visible_windows（分类后的 VW 窗口）中按 hwnd 查找匹配窗口
+        2. hwnd 匹配成功且 is_taskbar=True → 显示窗口
+        3. hwnd 不匹配或 is_taskbar=False → 按进程名在 visible_windows 中查找
+        4. 找到新 VW 窗口 → 更新配置并显示
+        5. 进程名也找不到 → 从配置中移除该条目
+
+        Args:
+            visible_windows: 可见窗口列表（classified.foreground），只包含 is_taskbar=True 的 VW 窗口
+        """
         if not self.config:
             return
 
         switch_windows_config = getattr(self.config, "switch_windows", [])
+        config_changed = False
 
         # 兼容旧的 switch_processes 配置
         if not switch_windows_config:
@@ -54,101 +54,100 @@ class SwitchMixin:
                     })
                 self.config.switch_windows = switch_windows_config
                 self.config.switch_processes = []
-                if self.config_manager:
-                    self.config_manager.save(self.config)
+                config_changed = True
 
         if not switch_windows_config:
             self.switch_window_table.setRowCount(0)
             return
 
-        switch_windows = []
-        all_windows = self.window_manager.get_all_windows() if self.window_manager else []
+        # 构建 visible_windows 的快速查找索引
+        hwnd_index = {win.hwnd: win for win in visible_windows}
+        # 进程名 → 第一个匹配的 VW 窗口（one-VW-per-PID）
+        process_index = {}
+        for win in visible_windows:
+            pname_lower = win.process_name.lower()
+            if pname_lower not in process_index:
+                process_index[pname_lower] = win
 
-        try:
-            import psutil
-            running_processes = set()
-            for proc in psutil.process_iter(["name"]):
-                try:
-                    running_processes.add(proc.info["name"].lower())
-                except Exception:
-                    continue
-        except Exception:
-            running_processes = set()
+        new_switch_config = []
+        switch_windows = []
 
         for entry in switch_windows_config:
             hwnd = entry.get("hwnd", 0)
             process_name = entry.get("process_name", "")
+            process_name_lower = process_name.lower() if process_name else ""
 
-            if hwnd > 0:
-                matched = [win for win in all_windows if win.hwnd == hwnd]
-                if matched:
-                    switch_windows.extend(matched)
+            matched_win = None
+
+            # 路径1：按 hwnd 精确匹配
+            if hwnd > 0 and hwnd in hwnd_index:
+                win = hwnd_index[hwnd]
+                if win.is_taskbar:
+                    matched_win = win
+                    logger.debug(
+                        "_update_switch_window_table: hwnd=%d 精确匹配成功 (title='%s')",
+                        hwnd, win.title,
+                    )
                 else:
-                    process_name_lower = process_name.lower() if process_name else ""
-                    if process_name_lower and process_name_lower in running_processes:
-                        switch_windows.append(WindowInfo(
-                            hwnd=hwnd,
-                            title=f"[运行中] {entry.get('title', process_name)}",
-                            process_name=process_name,
-                            is_visible=False, is_taskbar=False,
-                            state=WindowState.HIDDEN,
-                        ))
-                    else:
-                        switch_windows.append(WindowInfo(
-                            hwnd=hwnd,
-                            title=f"[未找到] {entry.get('title', 'Unknown')}",
-                            process_name=process_name,
-                            is_visible=False, is_taskbar=False,
-                            state=WindowState.HIDDEN,
-                        ))
+                    logger.warning(
+                        "_update_switch_window_table: hwnd=%d 对应非 VW 窗口，按进程名重新匹配",
+                        hwnd,
+                    )
+
+            # 路径2：hwnd 匹配失败，按进程名匹配
+            if matched_win is None and process_name_lower:
+                if process_name_lower in process_index:
+                    matched_win = process_index[process_name_lower]
+                    logger.info(
+                        "_update_switch_window_table: 进程 '%s' 匹配到 VW 窗口 hwnd=%d (title='%s')",
+                        process_name, matched_win.hwnd, matched_win.title,
+                    )
+                    # 更新配置中的 hwnd
+                    entry["hwnd"] = matched_win.hwnd
+                    entry["title"] = matched_win.title
+                    config_changed = True
+
+            if matched_win is not None:
+                # 成功匹配到 VW 窗口
+                switch_windows.append(matched_win)
+                new_switch_config.append(entry)
             else:
-                if not process_name:
-                    continue
-                process_name_lower = process_name.lower()
-                taskbar_windows = [
-                    win for win in all_windows
-                    if win.process_name.lower() == process_name_lower
-                    and win.is_taskbar and win.title.strip()
-                ]
-                if taskbar_windows:
-                    switch_windows.extend(taskbar_windows)
+                # 匹配失败：窗口不存在或没有 VW 窗口
+                if process_name_lower:
+                    logger.info(
+                        "_update_switch_window_table: 进程 '%s' (hwnd=%d) 没有匹配的 VW 窗口，从配置中移除",
+                        process_name, hwnd,
+                    )
                 else:
-                    visible_windows = [
-                        win for win in all_windows
-                        if win.process_name.lower() == process_name_lower
-                        and win.is_visible and win.title.strip()
-                    ]
-                    if visible_windows:
-                        switch_windows.extend(visible_windows)
-                    elif process_name_lower in running_processes:
-                        switch_windows.append(WindowInfo(
-                            hwnd=0,
-                            title=f"[运行中] {process_name}",
-                            process_name=process_name,
-                            is_visible=False, is_taskbar=False,
-                            state=WindowState.HIDDEN,
-                        ))
-                    else:
-                        switch_windows.append(WindowInfo(
-                            hwnd=0,
-                            title=f"[未运行] {process_name}",
-                            process_name=process_name,
-                            is_visible=False, is_taskbar=False,
-                            state=WindowState.HIDDEN,
-                        ))
+                    logger.warning(
+                        "_update_switch_window_table: 无效条目 (hwnd=%d, 无进程名)，从配置中移除",
+                        hwnd,
+                    )
+                # 不加入 new_switch_config，即从配置中移除
+                config_changed = True
+
+        # 如果配置有变化（hwnd 更新或条目移除），自动保存
+        if config_changed and self.config_manager:
+            self.config.switch_windows = new_switch_config
+            try:
+                self.config_manager.save(self.config)
+                logger.info("_update_switch_window_table: 已自动保存更新的切换窗口配置")
+            except Exception as e:
+                logger.error("_update_switch_window_table: 保存配置失败: %s", str(e))
 
         self._update_window_table_incremental(
             self.switch_window_table, switch_windows, allow_check=False
         )
 
-    def _on_switch_window_double_clicked(self, row: int, col: int) -> None:
+    def _on_switch_window_double_clicked(self, row: int, _col: int) -> None:
         """切换窗口表格双击事件"""
         title_item = self.switch_window_table.item(row, 2)
         if not title_item:
             return
-        hwnd = title_item.data(Qt.ItemDataRole.UserRole)  # noqa: F821
-        process_name = title_item.data(Qt.ItemDataRole.UserRole + 1)  # noqa: F821
-        if hwnd and hwnd > 0:
+        raw_hwnd = title_item.data(Qt.ItemDataRole.UserRole)
+        hwnd = int(raw_hwnd) if raw_hwnd is not None else 0
+        process_name = title_item.data(Qt.ItemDataRole.UserRole + 1) or ""
+        if hwnd > 0:
             self._switch_window_to_foreground(hwnd)
         elif process_name:
             self._switch_process_to_foreground(process_name)
@@ -157,65 +156,106 @@ class SwitchMixin:
         """切换窗口表格右键菜单"""
         table = self.switch_window_table
         selected_row = table.currentRow()
-        if selected_row < 0:
-            return
-
-        title_item = table.item(selected_row, 2)
-        if not title_item:
-            return
-
-        hwnd = title_item.data(Qt.ItemDataRole.UserRole)  # noqa: F821
-        process_name = title_item.data(Qt.ItemDataRole.UserRole + 1)  # noqa: F821
-        if not hwnd and not process_name:
-            return
 
         menu = QMenu()
-        restore_action = QAction("恢复窗口", self)
-        if hwnd and hwnd > 0:
-            restore_action.triggered.connect(lambda: self._switch_window_to_foreground(hwnd))
-        else:
-            restore_action.triggered.connect(lambda: self._switch_process_to_foreground(process_name))
-        menu.addAction(restore_action)
 
-        remove_action = QAction("移除", self)
-        if hwnd and hwnd > 0:
-            remove_action.triggered.connect(lambda: self._remove_switch_window(hwnd))
-        else:
-            remove_action.triggered.connect(lambda: self._remove_switch_process(process_name))
-        menu.addAction(remove_action)
+        if selected_row >= 0:
+            title_item = table.item(selected_row, 2)
+            if title_item:
+                # 获取hwnd（Qt的data()对0可能返回None或0，需要统一处理）
+                raw_hwnd = title_item.data(Qt.ItemDataRole.UserRole)
+                hwnd = int(raw_hwnd) if raw_hwnd is not None else 0
+                process_name = title_item.data(Qt.ItemDataRole.UserRole + 1) or ""
+
+                if hwnd > 0 or process_name:
+                    activate_action = QAction("激活窗口", self)
+                    if hwnd > 0:
+                        activate_action.triggered.connect(lambda checked=False, h=hwnd: self._switch_window_to_foreground(h))
+                    else:
+                        activate_action.triggered.connect(lambda checked=False, p=process_name: self._switch_process_to_foreground(p))
+                    menu.addAction(activate_action)
+
+                    remove_action = QAction("移除", self)
+                    if hwnd > 0:
+                        remove_action.triggered.connect(lambda checked=False, h=hwnd: self._remove_switch_window(h))
+                    else:
+                        remove_action.triggered.connect(lambda checked=False, p=process_name: self._remove_switch_process(p))
+                    menu.addAction(remove_action)
+
+                    menu.addSeparator()
+
+        activate_all_action = QAction("激活全部窗口", self)
+        activate_all_action.triggered.connect(self.switch_all_processes_to_foreground)
+        menu.addAction(activate_all_action)
 
         menu.exec(table.mapToGlobal(position))
 
-    def _switch_window_to_foreground(self, hwnd: int) -> None:
-        """将指定句柄的窗口恢复到前台"""
-        if not self.window_manager:
-            return
-        if self.window_manager.show_and_minimize_window(hwnd):
-            logger.info(f"已将窗口显示到前台: hwnd={hwnd}")
-        else:
-            logger.warning(f"显示窗口失败: hwnd={hwnd}")
+    def _switch_window_to_foreground(self, hwnd: int) -> bool:
+        """将指定句柄的窗口切换到前台并最大化
 
-    def _switch_process_to_foreground(self, process_name: str) -> None:
-        """将指定进程的窗口恢复到前台"""
+        Returns:
+            bool: 成功返回True，失败返回False
+        """
         if not self.window_manager:
-            return
-        count = self.window_manager.show_windows_by_process_name(process_name)
+            return False
+        if self.window_manager.switch_to_foreground(hwnd):
+            logger.info(f"已将窗口切换到前台并最大化: hwnd={hwnd}")
+            return True
+        logger.warning(f"切换窗口到前台失败: hwnd={hwnd}")
+        return False
+
+    def _switch_process_to_foreground(self, process_name: str) -> int:
+        """将指定进程的窗口切换到前台并最大化
+
+        Returns:
+            int: 成功激活的窗口数量
+        """
+        if not self.window_manager:
+            return 0
+        count = self.window_manager.switch_windows_by_process_name(process_name)
         if count > 0:
-            self.status_updated.emit(f"已恢复 {process_name} 的 {count} 个窗口")
-            logger.info("切换窗口：恢复 %s 的 %d 个窗口到前台", process_name, count)
-        else:
-            self.status_updated.emit(f"{process_name} 没有可恢复的窗口")
+            logger.info("切换窗口：激活 %s 的 %d 个窗口到前台", process_name, count)
+        return count
 
     def switch_all_processes_to_foreground(self) -> None:
-        """热键触发：将所有切换窗口列表中的进程窗口恢复到前台"""
+        """热键触发：将所有切换窗口列表中的窗口按顺序激活到前台并最大化
+
+        用于应对假死(hung)窗口的激活需求。
+        """
         if not self.config:
             return
+        switch_windows = getattr(self.config, "switch_windows", [])
+
+        # 兼容旧的 switch_processes 配置
         switch_processes = getattr(self.config, "switch_processes", [])
-        if not switch_processes:
-            self.status_updated.emit("切换窗口列表为空，请先添加进程")
+
+        if not switch_windows and not switch_processes:
+            self.status_updated.emit("切换窗口列表为空，请先添加窗口")
             return
+
+        activated_count = 0
+
+        # 优先处理 HWND 条目（按添加顺序）
+        for entry in switch_windows:
+            hwnd = entry.get("hwnd", 0)
+            process_name = entry.get("process_name", "")
+
+            if hwnd > 0:
+                # 按 HWND 激活单个窗口
+                if self._switch_window_to_foreground(hwnd):
+                    activated_count += 1
+            elif process_name:
+                # 按进程名激活（兼容旧配置）
+                activated_count += self._switch_process_to_foreground(process_name)
+
+        # 处理旧的 switch_processes 配置
         for process_name in switch_processes:
-            self._switch_process_to_foreground(process_name)
+            activated_count += self._switch_process_to_foreground(process_name)
+
+        if activated_count > 0:
+            self.status_updated.emit(f"已激活 {activated_count} 个切换窗口到前台")
+        else:
+            self.status_updated.emit("没有找到可激活的切换窗口")
 
     def _remove_switch_window(self, hwnd: int) -> None:
         """从切换窗口列表中移除指定句柄的窗口"""
@@ -228,7 +268,8 @@ class SwitchMixin:
                 self.config.switch_windows = switch_windows
                 if self.config_manager:
                     self.config_manager.save(self.config)
-                self._update_switch_window_table()
+                # 触发完整刷新，让 _update_switch_window_table 使用最新的 visible_windows
+                self.refresh_windows()
                 logger.info(f"已从切换窗口列表移除: hwnd={hwnd}")
                 return
 
@@ -243,7 +284,8 @@ class SwitchMixin:
                 self.config.switch_windows = switch_windows
                 if self.config_manager:
                     self.config_manager.save(self.config)
-                self._update_switch_window_table()
+                # 触发完整刷新，让 _update_switch_window_table 使用最新的 visible_windows
+                self.refresh_windows()
                 logger.info(f"已从切换窗口列表移除: {process_name}")
                 return
 
@@ -253,20 +295,21 @@ class SwitchMixin:
             self.config.switch_processes = old_processes
             if self.config_manager:
                 self.config_manager.save(self.config)
-            self._update_switch_window_table()
+            # 触发完整刷新，让 _update_switch_window_table 使用最新的 visible_windows
+            self.refresh_windows()
 
     def _show_add_process_dialog(self) -> None:
         """显示添加进程对话框"""
         try:
-            import psutil
             processes = {}
-            for proc in psutil.process_iter(["name", "pid"]):
-                try:
-                    name = proc.info["name"].lower()
-                    if name not in processes:
-                        processes[name] = proc.info["name"]
-                except Exception:
-                    continue
+            if psutil:
+                for proc in psutil.process_iter(["name", "pid"]):
+                    try:
+                        name = proc.info["name"].lower()
+                        if name not in processes:
+                            processes[name] = proc.info["name"]
+                    except Exception:
+                        continue
             process_list = sorted(processes.values())
         except Exception:
             process_list = []
@@ -338,12 +381,27 @@ class SwitchMixin:
 
         if self.window_manager:
             all_windows = self.window_manager.get_all_windows()
+            # 查找该进程的所有窗口（使用进程名作为辅助辨识参数）
+            # 注意：这里按进程名查找是合理的，因为用户是通过进程名发起的自动选择请求
             process_windows = [
                 w for w in all_windows if w.process_name.lower() == process_name_lower
             ]
+            # 只选最后一个窗口（one-VW-per-PID），避免 N 次 refresh_windows
+            last_window = None
             for window in process_windows:
                 if window.hwnd not in self._selected_windows:
-                    self._select_window(window.hwnd)
+                    last_window = window
+            if last_window:
+                logger.info(
+                    "_auto_select_process: 通过进程名 '%s' 自动选中窗口 hwnd=%d - %s",
+                    process_name, last_window.hwnd, last_window.title,
+                )
+                self._select_window(last_window.hwnd)
+            else:
+                logger.debug(
+                    "_auto_select_process: 进程 '%s' 无可选窗口 (已选中或无窗口)",
+                    process_name,
+                )
         self.refresh_windows()
 
     def _add_switch_window_by_hwnd(self, hwnd: int, process_name: str = "") -> None:
@@ -373,40 +431,16 @@ class SwitchMixin:
 
         new_entry = {
             "hwnd": hwnd, "process_name": window_process_name,
-            "title": title, "source": "manual"
+            "title": title, "source": WindowEntry.SOURCE_MANUAL
         }
         switch_windows.append(new_entry)
         self.config.switch_windows = switch_windows
         if self.config_manager:
             self.config_manager.save(self.config)
-        self._update_switch_window_table()
+        # 触发完整刷新，让 _update_switch_window_table 使用最新的 visible_windows
+        self.refresh_windows()
         logger.info(f"已添加到切换窗口列表: hwnd={hwnd}, title={title}")
 
-    def _add_switch_process(self, process_name: str) -> None:
-        """添加进程到切换窗口列表"""
-        if not self.config:
-            return
-        switch_windows = getattr(self.config, "switch_windows", [])
-        for entry in switch_windows:
-            if entry.get("process_name", "").lower() == process_name.lower():
-                logger.debug(f"进程已在切换列表中: {process_name}")
-                return
-        new_entry = {
-            "hwnd": 0, "process_name": process_name,
-            "title": process_name, "source": "process"
-        }
-        switch_windows.append(new_entry)
-        self.config.switch_windows = switch_windows
-        if self.config_manager:
-            self.config_manager.save(self.config)
-        self._update_switch_window_table()
-
-    def _add_switch_process_by_name(self, process_name: str) -> None:
-        """通过进程名添加到切换窗口列表"""
-        self._add_switch_process(process_name)
-
     def _load_switch_processes_from_config(self) -> None:
-        """从配置中加载切换窗口进程列表"""
-        if not self.config:
-            return
-        self._update_switch_window_table()
+        """从配置中加载切换窗口进程列表（实际显示由首次 refresh 驱动）"""
+        pass

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # windowmanager/hotkey_manager.py
 """
 全局热键管理器（使用pynput库实现钩子模式）
@@ -9,19 +10,10 @@ import time
 from typing import Optional, Callable, Dict
 import logging
 
-# 尝试导入pynput
-try:
-    from pynput import keyboard, mouse
-    PYNPUT_AVAILABLE = True
-except ImportError:
-    PYNPUT_AVAILABLE = False
-    keyboard = None
-    mouse = None
+from deps import PYNPUT_AVAILABLE, keyboard, mouse
+from hotkey_recorder_core import HotkeyRecorder
 
 logger = logging.getLogger(__name__)
-
-# 默认录制超时时间（秒）
-DEFAULT_RECORDING_TIMEOUT = 5.0
 
 
 class HotkeyManager:
@@ -37,18 +29,21 @@ class HotkeyManager:
 
         # 键盘按键状态字典
         self._key_states: Dict[str, bool] = {
-            'shift': False,
-            'ctrl': False,
-            'alt': False,
-            'win': False
+            "shift": False,
+            "ctrl": False,
+            "alt": False,
+            "win": False,
         }
 
         # 鼠标按键状态字典
         self._mouse_states: Dict[str, bool] = {
-            'left': False,
-            'right': False,
-            'middle': False
+            "left": False,
+            "right": False,
+            "middle": False,
         }
+
+        # 按键按下时间记录
+        self._key_press_times: Dict[str, float] = {}
 
         # 状态锁
         self._state_lock = threading.Lock()
@@ -60,25 +55,26 @@ class HotkeyManager:
         # 回调函数
         self._hide_callback: Optional[Callable] = None
         self._show_callback: Optional[Callable] = None
+        self._switch_callback: Optional[Callable] = None
 
         # 热键序列
         self._hide_hotkey_sequence = "Middle+Right"
         self._show_hotkey_sequence = "Shift+Right"
+        self._switch_hotkey_sequence = "Ctrl+Right"
 
-        # 录制相关
-        self._recording = False
-        self._recording_lock = threading.Lock()
-        self._recording_start_time = 0.0
-        self._recording_timeout = DEFAULT_RECORDING_TIMEOUT
-        self._recorded_keys: list = []
-        self._recording_callback: Optional[Callable] = None
-        self._realtime_update_callback: Optional[Callable] = None
+        # 共享的热键录制器
+        self._recorder = HotkeyRecorder()
 
         # 防重复触发的冷却时间
         self._last_trigger_time = 0
         self._trigger_cooldown = 0.3
 
-    def register_hide_hotkey(self, callback: Callable, hotkey_sequence: str = "Middle+Right"):
+        # 组合键时间差阈值（秒）
+        self._combo_time_threshold = 0.3
+
+    def register_hide_hotkey(
+        self, callback: Callable, hotkey_sequence: str = "Middle+Right"
+    ):
         """注册隐藏窗口热键回调
 
         Args:
@@ -89,7 +85,14 @@ class HotkeyManager:
         self._hide_hotkey_sequence = hotkey_sequence
         logger.info("Registered hide hotkey: %s", hotkey_sequence)
 
-    def register_show_hotkey(self, callback: Callable, hotkey_sequence: str = "Shift+Right"):
+    def unregister_hide_hotkey(self):
+        """注销隐藏窗口热键"""
+        self._hide_callback = None
+        logger.info("Unregistered hide hotkey")
+
+    def register_show_hotkey(
+        self, callback: Callable, hotkey_sequence: str = "Shift+Right"
+    ):
         """注册显示窗口热键回调
 
         Args:
@@ -99,6 +102,29 @@ class HotkeyManager:
         self._show_callback = callback
         self._show_hotkey_sequence = hotkey_sequence
         logger.info("Registered show hotkey: %s", hotkey_sequence)
+
+    def unregister_show_hotkey(self):
+        """注销显示窗口热键"""
+        self._show_callback = None
+        logger.info("Unregistered show hotkey")
+
+    def register_switch_hotkey(
+        self, callback: Callable, hotkey_sequence: str = "Ctrl+Right"
+    ):
+        """注册切换窗口热键回调
+
+        Args:
+            callback: 热键触发时的回调函数
+            hotkey_sequence: 热键序列字符串，默认为"Ctrl+Right"
+        """
+        self._switch_callback = callback
+        self._switch_hotkey_sequence = hotkey_sequence
+        logger.info("Registered switch hotkey: %s", hotkey_sequence)
+
+    def unregister_switch_hotkey(self):
+        """注销切换窗口热键"""
+        self._switch_callback = None
+        logger.info("Unregistered switch hotkey")
 
     def start(self) -> bool:
         """启动热键监听"""
@@ -115,15 +141,12 @@ class HotkeyManager:
 
             # 启动键盘监听器
             self._keyboard_listener = keyboard.Listener(
-                on_press=self._on_key_press,
-                on_release=self._on_key_release
+                on_press=self._on_key_press, on_release=self._on_key_release
             )
             self._keyboard_listener.start()
 
             # 启动鼠标监听器
-            self._mouse_listener = mouse.Listener(
-                on_click=self._on_mouse_click
-            )
+            self._mouse_listener = mouse.Listener(on_click=self._on_mouse_click)
             self._mouse_listener.start()
 
             logger.info("Hotkey manager started (pynput hook mode)")
@@ -139,13 +162,14 @@ class HotkeyManager:
             key_name = self._get_key_name(key)
             if key_name:
                 # 如果正在录制，记录按键
-                if self._recording:
+                if self._recorder.is_recording():
                     self._record_key(key_name)
 
-                # 更新状态
+                # 更新状态和按下时间
                 with self._state_lock:
                     if key_name in self._key_states:
                         self._key_states[key_name] = True
+                        self._key_press_times[key_name] = time.time()
 
                 # 检测组合快捷键
                 self._check_hotkey_combinations()
@@ -161,23 +185,28 @@ class HotkeyManager:
                 with self._state_lock:
                     if key_name in self._key_states:
                         self._key_states[key_name] = False
+                    # 清理按键时间记录
+                    if key_name in self._key_press_times:
+                        del self._key_press_times[key_name]
 
         except Exception as e:
             logger.error("Error in key release handler: %s", str(e))
 
-    def _on_mouse_click(self, x, y, button, pressed):
+    def _on_mouse_click(self, _x, _y, button, pressed):
         """鼠标点击事件处理"""
         try:
             mouse_name = self._get_mouse_name(button)
             if mouse_name:
                 # 如果正在录制，记录鼠标按键
-                if self._recording and pressed:
+                if self._recorder.is_recording() and pressed:
                     self._record_key(mouse_name)
 
-                # 更新状态
+                # 更新状态和按下时间
                 with self._state_lock:
                     if mouse_name in self._mouse_states:
                         self._mouse_states[mouse_name] = pressed
+                        if pressed:
+                            self._key_press_times[mouse_name] = time.time()
 
                 # 检测组合快捷键
                 if pressed:
@@ -189,20 +218,17 @@ class HotkeyManager:
     def _get_key_name(self, key) -> Optional[str]:
         """获取按键名称"""
         try:
-            # 处理修饰键
             if key in (keyboard.Key.shift_l, keyboard.Key.shift_r):
-                return 'shift'
-            elif key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
-                return 'ctrl'
-            elif key in (keyboard.Key.alt_l, keyboard.Key.alt_r):
-                return 'alt'
-            elif key in (keyboard.Key.cmd_l, keyboard.Key.cmd_r):
-                return 'win'
-            # 处理普通字符键
-            elif hasattr(key, 'char') and key.char:
+                return "shift"
+            if key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
+                return "ctrl"
+            if key in (keyboard.Key.alt_l, keyboard.Key.alt_r):
+                return "alt"
+            if key in (keyboard.Key.cmd_l, keyboard.Key.cmd_r):
+                return "win"
+            if hasattr(key, "char") and key.char:
                 return key.char.lower()
-            # 处理特殊键
-            elif hasattr(key, 'name'):
+            if hasattr(key, "name"):
                 return key.name.lower()
             return None
         except Exception:
@@ -212,11 +238,11 @@ class HotkeyManager:
         """获取鼠标按键名称"""
         try:
             if button == mouse.Button.left:
-                return 'left'
-            elif button == mouse.Button.right:
-                return 'right'
-            elif button == mouse.Button.middle:
-                return 'middle'
+                return "left"
+            if button == mouse.Button.right:
+                return "right"
+            if button == mouse.Button.middle:
+                return "middle"
             return None
         except Exception:
             return None
@@ -236,7 +262,7 @@ class HotkeyManager:
         triggered = False
 
         # 检测隐藏热键
-        hide_parts = [p.strip().lower() for p in self._hide_hotkey_sequence.split('+')]
+        hide_parts = [p.strip().lower() for p in self._hide_hotkey_sequence.split("+")]
         if self._check_combination_match(hide_parts, key_states, mouse_states):
             if self._hide_callback:
                 logger.debug("Hide hotkey triggered: %s", self._hide_hotkey_sequence)
@@ -246,38 +272,92 @@ class HotkeyManager:
 
         # 检测显示热键
         if not triggered:
-            show_parts = [p.strip().lower() for p in self._show_hotkey_sequence.split('+')]
+            show_parts = [
+                p.strip().lower() for p in self._show_hotkey_sequence.split("+")
+            ]
             if self._check_combination_match(show_parts, key_states, mouse_states):
                 if self._show_callback:
-                    logger.debug("Show hotkey triggered: %s", self._show_hotkey_sequence)
+                    logger.debug(
+                        "Show hotkey triggered: %s", self._show_hotkey_sequence
+                    )
                     self._execute_callback_safely(self._show_callback, "show")
                     triggered = True
                     self._reset_mouse_states(show_parts)
 
+        # 检测切换窗口热键
+        if not triggered:
+            switch_parts = [
+                p.strip().lower() for p in self._switch_hotkey_sequence.split("+")
+            ]
+            if self._check_combination_match(switch_parts, key_states, mouse_states):
+                if self._switch_callback:
+                    logger.debug(
+                        "Switch hotkey triggered: %s", self._switch_hotkey_sequence
+                    )
+                    self._execute_callback_safely(self._switch_callback, "switch")
+                    triggered = True
+                    self._reset_mouse_states(switch_parts)
+
         if triggered:
             self._last_trigger_time = current_time
 
-    def _check_combination_match(self, parts: list, key_states: Dict, mouse_states: Dict) -> bool:
-        """检查组合键是否匹配"""
+    def _check_combination_match(
+        self, parts: list, key_states: Dict, mouse_states: Dict
+    ) -> bool:
+        """检查组合键是否匹配（支持时间差）"""
+        # 检查所有按键是否都按下了
+        pressed_keys = []
         for part in parts:
             part_lower = self._normalize_key_name(part)
             if part_lower in key_states:
                 if not key_states[part_lower]:
                     return False
+                pressed_keys.append(part_lower)
             elif part_lower in mouse_states:
                 if not mouse_states[part_lower]:
                     return False
+                pressed_keys.append(part_lower)
             else:
                 return False
+
+        # 检查按键按下的时间差是否在阈值以内
+        if not pressed_keys:
+            return False
+
+        # 获取所有按键的按下时间
+        press_times = []
+        current_time = time.time()
+
+        for key in pressed_keys:
+            if key in self._key_press_times:
+                press_time = self._key_press_times[key]
+                # 检查按键按下时间是否在当前时间的阈值范围内
+                if current_time - press_time <= self._combo_time_threshold:
+                    press_times.append(press_time)
+                else:
+                    return False
+            else:
+                return False
+
+        # 检查所有按键的时间差是否在阈值以内
+        if len(press_times) >= 2:
+            press_times.sort()
+            time_diff = press_times[-1] - press_times[0]
+            if time_diff > self._combo_time_threshold:
+                return False
+
         return True
 
     def _normalize_key_name(self, name: str) -> str:
         """标准化按键名称"""
         name = name.lower()
         mapping = {
-            'lbutton': 'left',
-            'rbutton': 'right',
-            'mbutton': 'middle'
+            "lbutton": "left",
+            "rbutton": "right",
+            "mbutton": "middle",
+            "lb": "left",
+            "rb": "right",
+            "mb": "middle",
         }
         return mapping.get(name, name)
 
@@ -296,44 +376,11 @@ class HotkeyManager:
                 logger.warning("Callback %s is not callable", callback_name)
                 return
 
-            # 尝试获取Tkinter root对象
-            root = self._get_tkinter_root(callback)
-
-            if root and hasattr(root, 'after'):
-                try:
-                    if self._is_root_valid(root):
-                        root.after(0, callback)
-                        logger.debug("Scheduled %s callback via Tkinter after", callback_name)
-                        return
-                except Exception as e:
-                    logger.warning("Failed to use Tkinter after: %s", str(e))
-
-            # 降级：直接执行
             callback()
             logger.debug("Directly executed %s callback", callback_name)
 
         except Exception as e:
             logger.error("Error executing %s callback: %s", callback_name, str(e))
-
-    def _get_tkinter_root(self, callback: Callable):
-        """获取Tkinter root对象"""
-        if hasattr(callback, '__self__'):
-            obj = callback.__self__
-            for attr in ('root', '_root', 'master'):
-                if hasattr(obj, attr):
-                    return getattr(obj, attr)
-            if hasattr(obj, 'winfo_exists'):
-                return obj
-        return None
-
-    def _is_root_valid(self, root) -> bool:
-        """检查root窗口是否有效"""
-        if hasattr(root, 'winfo_exists'):
-            try:
-                return root.winfo_exists()
-            except Exception:
-                pass
-        return True
 
     def stop(self):
         """停止热键监听"""
@@ -369,10 +416,11 @@ class HotkeyManager:
             for key in self._mouse_states:
                 self._mouse_states[key] = False
 
-    # ==================== 热键录制功能 ====================
-
-    def start_recording(self, callback: Callable[[Optional[str]], None],
-                       realtime_update_callback: Optional[Callable[[str], None]] = None) -> bool:
+    def start_recording(
+        self,
+        callback: Callable[[Optional[str]], None],
+        realtime_update_callback: Optional[Callable[[str], None]] = None,
+    ) -> bool:
         """开始录制快捷键
 
         Args:
@@ -382,22 +430,7 @@ class HotkeyManager:
         Returns:
             bool: 是否成功开始录制
         """
-        with self._recording_lock:
-            if self._recording:
-                logger.warning("Recording already in progress")
-                return False
-
-            self._recording = True
-            self._recording_start_time = time.time()
-            self._recorded_keys = []
-            self._recording_callback = callback
-            self._realtime_update_callback = realtime_update_callback
-
-            logger.info("Started recording hotkey...")
-
-        # 启动超时检测线程
-        threading.Thread(target=self._recording_timeout_handler, daemon=True).start()
-        return True
+        return self._recorder.start_recording(callback, realtime_update_callback)
 
     def stop_recording(self) -> Optional[str]:
         """停止录制快捷键
@@ -405,85 +438,58 @@ class HotkeyManager:
         Returns:
             Optional[str]: 录制的快捷键字符串
         """
-        with self._recording_lock:
-            if not self._recording:
-                return None
+        return self._recorder.stop_recording()
 
-            self._recording = False
-            recorded_keys = self._recorded_keys.copy()
-            self._recorded_keys = []
+    def check_health(self) -> None:
+        """热键健康检查（实际检查监听器线程存活状态）"""
+        if not self._running:
+            return
 
-        if recorded_keys:
-            hotkey_str = self._format_hotkey_string(recorded_keys)
-            logger.info("Stopped recording, got: %s", hotkey_str)
-            return hotkey_str
+        keyboard_alive = self._keyboard_listener.is_alive() if self._keyboard_listener else False
+        mouse_alive = self._mouse_listener.is_alive() if self._mouse_listener else False
 
-        logger.info("Stopped recording, no keys recorded")
-        return None
+        if not keyboard_alive or not mouse_alive:
+            logger.warning("热键监听器异常 - 键盘存活: %s, 鼠标存活: %s", keyboard_alive, mouse_alive)
+            self._restart_listeners()
+        else:
+            logger.debug("热键管理器健康检查正常")
+
+    def _restart_listeners(self) -> None:
+        """重启崩溃的监听器"""
+        with self._lock:
+            try:
+                # 停止残留的监听器
+                if self._keyboard_listener:
+                    try:
+                        self._keyboard_listener.stop()
+                    except Exception:
+                        pass
+                if self._mouse_listener:
+                    try:
+                        self._mouse_listener.stop()
+                    except Exception:
+                        pass
+
+                self._cleanup()
+
+                # 重新启动监听器
+                if not PYNPUT_AVAILABLE:
+                    logger.error("pynput 不可用，无法重启监听器")
+                    return
+
+                self._keyboard_listener = keyboard.Listener(
+                    on_press=self._on_key_press, on_release=self._on_key_release
+                )
+                self._keyboard_listener.start()
+
+                self._mouse_listener = mouse.Listener(on_click=self._on_mouse_click)
+                self._mouse_listener.start()
+
+                logger.info("热键监听器已重启完成")
+            except Exception as e:
+                logger.error("重启热键监听器失败: %s", str(e))
+                self._running = False
 
     def _record_key(self, key_name: str):
         """记录按键（录制模式下）"""
-        with self._recording_lock:
-            if not self._recording:
-                return
-
-            # 避免重复记录同一个键
-            if key_name not in self._recorded_keys:
-                self._recorded_keys.append(key_name)
-                logger.debug("Recorded key: %s", key_name)
-
-                # 实时更新回调
-                if self._realtime_update_callback:
-                    try:
-                        hotkey_str = self._format_hotkey_string(self._recorded_keys)
-                        self._realtime_update_callback(hotkey_str)
-                    except Exception as e:
-                        logger.warning("Error in realtime update callback: %s", str(e))
-
-    def _format_hotkey_string(self, keys: list) -> str:
-        """格式化热键字符串"""
-        formatted = [self._format_key_name(k) for k in keys]
-        return "+".join(formatted)
-
-    def _format_key_name(self, key: str) -> str:
-        """格式化单个按键名称"""
-        mapping = {
-            'ctrl': 'Ctrl',
-            'alt': 'Alt',
-            'shift': 'Shift',
-            'win': 'Win',
-            'left': 'LButton',
-            'right': 'RButton',
-            'middle': 'MButton'
-        }
-        if key in mapping:
-            return mapping[key]
-        return key.capitalize() if len(key) == 1 else key
-
-    def _recording_timeout_handler(self):
-        """录制超时处理"""
-        callback = None
-        hotkey_str = None
-
-        while True:
-            with self._recording_lock:
-                if not self._recording:
-                    return
-
-                elapsed = time.time() - self._recording_start_time
-                if elapsed >= self._recording_timeout:
-                    self._recording = False
-                    callback = self._recording_callback
-                    hotkey_str = self._format_hotkey_string(self._recorded_keys) if self._recorded_keys else None
-                    self._recording_callback = None
-                    self._realtime_update_callback = None
-                    break
-
-            time.sleep(0.1)
-
-        if callback:
-            try:
-                logger.info("Recording timed out, result: %s", hotkey_str)
-                callback(hotkey_str)
-            except Exception as e:
-                logger.error("Error calling recording callback: %s", str(e))
+        self._recorder.record_key(key_name)

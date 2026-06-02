@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # windowmanager/ui.py
 """
 窗口管理器 - 主UI模块 (PySide6版本)
@@ -5,11 +6,11 @@
 """
 
 import os
-import logging
-import threading
 import time
+import logging
+from dataclasses import dataclass, field
 from typing import Optional
-from queue import Queue, Empty
+from queue import Queue, Empty, Full
 
 from PySide6.QtWidgets import (
     QApplication,
@@ -23,7 +24,7 @@ from PySide6.QtWidgets import (
     QSystemTrayIcon,
     QMenu,
 )
-from PySide6.QtCore import QTimer, Signal
+from PySide6.QtCore import QTimer, Signal, QEventLoop
 from PySide6.QtGui import QIcon, QAction
 
 from config import ConfigManager, Config
@@ -37,6 +38,7 @@ from constants import (
     UICommonConstants,
     NTPConstants,
     PathConstants,
+    TimeThresholdConstants,
 )
 from utils import get_resource_path
 from theme import theme
@@ -48,6 +50,21 @@ import ui_about
 # 常量定义（在 constants.py 中统一管理）
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class TrayState:
+    """托盘状态数据类，封装托盘相关属性"""
+    icon: Optional[QSystemTrayIcon] = None
+    heartbeat_timer: Optional[QTimer] = None
+    last_interaction: float = 0.0
+
+
+@dataclass
+class LogState:
+    """日志状态数据类，封装日志相关属性"""
+    queue: Queue = field(default_factory=lambda: Queue(maxsize=1000))
+    timer: Optional[QTimer] = None
 
 
 class AppWindow(QMainWindow):
@@ -109,7 +126,6 @@ class AppWindow(QMainWindow):
 
     def _init_basic_components(self):
         """初始化基础组件"""
-        # 初始化配置管理器
         self.config_manager = ConfigManager.get_instance()
         try:
             self.config = self.config_manager.load()
@@ -117,20 +133,11 @@ class AppWindow(QMainWindow):
             logger.error("加载配置失败: %s", str(e), exc_info=True)
             self.config = Config()
 
-        # 初始化热键管理器 - 使用pynput实现全局热键
         self.hotkey_manager: HotkeyManager = HotkeyManager()
 
-        # 托盘图标
-        self.tray_icon: Optional[QSystemTrayIcon] = None
-
-        # 心跳检测定时器
+        self._tray_state = TrayState()
+        self._log_state = LogState()
         self._heartbeat_timer: QTimer = QTimer()
-
-        # 日志队列和定时器
-        self._log_queue: Queue = Queue()
-        self._log_timer: QTimer = QTimer()
-
-        # 时间同步工具
         self.time_sync_tool = None
 
     def _init_window_properties(self):
@@ -138,13 +145,18 @@ class AppWindow(QMainWindow):
         # 设置窗口属性
         self.setWindowTitle(AppConstants.APP_TITLE)
         self.setMinimumSize(
-            UIConstants.WINDOW_DEFAULT_WIDTH,
-            UIConstants.WINDOW_DEFAULT_HEIGHT,
+            UIConstants.MIN_WINDOW_WIDTH,
+            UIConstants.MIN_WINDOW_HEIGHT,
         )
-        self.resize(
-            UIConstants.WINDOW_DEFAULT_WIDTH,
-            UIConstants.WINDOW_DEFAULT_HEIGHT,
-        )
+
+        # 从配置读取上次保存的窗口尺寸
+        width = UIConstants.WINDOW_DEFAULT_WIDTH
+        height = UIConstants.WINDOW_DEFAULT_HEIGHT
+        if self.config and hasattr(self.config, "ui") and isinstance(self.config.ui, dict):
+            width = self.config.ui.get("width", UIConstants.WINDOW_DEFAULT_WIDTH)
+            height = self.config.ui.get("height", UIConstants.WINDOW_DEFAULT_HEIGHT)
+
+        self.resize(width, height)
 
         # 设置主窗口样式
         self.setStyleSheet(theme.get_global_stylesheet())
@@ -233,7 +245,7 @@ class AppWindow(QMainWindow):
         # 连接热键回调信号（确保在主线程执行）
         self.hide_hotkey_triggered.connect(self.main_window.hide_selected_windows)
         self.show_hotkey_triggered.connect(
-            self.main_window.show_and_minimize_selected_hidden_windows
+            self.main_window.show_selected_hidden_windows  # ✅ 修复：只显示不最小化
         )
         self.switch_hotkey_triggered.connect(self.main_window.switch_all_processes_to_foreground)
 
@@ -258,21 +270,29 @@ class AppWindow(QMainWindow):
         logger.info("主窗口显示状态: %s", self.isVisible())
 
     def _start_window_manager(self):
-        """启动窗口管理器"""
-        # 启动窗口管理器
-        if self.window_manager:
-            # 在后台线程中启动窗口管理器，避免阻塞主线程
-            def start_window_manager():
-                try:
-                    self.window_manager.start()
-                    # 延迟刷新窗口列表，确保 UI 已经完全初始化
-                    time.sleep(0.5)
-                    # 通过信号让主线程刷新窗口列表
-                    self.request_refresh_windows.emit()
-                except Exception as e:
-                    logger.error("启动窗口管理器失败: %s", str(e), exc_info=True)
+        """启动窗口管理器 - 使用QTimer延迟执行"""
+        if not self.window_manager:
+            return
 
-            threading.Thread(target=start_window_manager, daemon=True).start()
+        # 使用QTimer在事件循环中延迟执行（避免线程问题）
+        def do_start():
+            try:
+                logger.info("QTimer回调: 开始启动窗口管理器...")
+                self.window_manager.start()
+                logger.info("QTimer回调: 窗口管理器启动完成, is_running=%s", self.window_manager.is_running)
+
+                if not self.window_manager.is_running:
+                    logger.warning("窗口管理器未正常运行")
+                    return
+
+                # 再次延迟刷新
+                QTimer.singleShot(UIConstants.POST_START_REFRESH_DELAY, lambda: self.request_refresh_windows.emit())
+                logger.info("QTimer回调: 已设置%dms后刷新信号", UIConstants.POST_START_REFRESH_DELAY)
+            except Exception as e:
+                logger.error("启动窗口管理器失败: %s", str(e), exc_info=True)
+
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(UIConstants.START_WINDOW_MANAGER_DELAY, do_start)
 
     def _init_hotkeys_and_tray(self):
         """初始化热键和托盘"""
@@ -296,9 +316,9 @@ class AppWindow(QMainWindow):
         # 连接日志更新信号
         self.log_updated.connect(self._on_log_updated)
 
-        # 设置日志定时器（每100ms检查一次队列）
-        self._log_timer.timeout.connect(self._process_log_queue)
-        self._log_timer.start(UICommonConstants.LOG_TIMER_INTERVAL_MS)
+        self._log_state.timer = QTimer()
+        self._log_state.timer.timeout.connect(self._process_log_queue)
+        self._log_state.timer.start(UICommonConstants.LOG_TIMER_INTERVAL_MS)
 
         # 设置日志处理器
         self._setup_log_handler()
@@ -318,9 +338,9 @@ class AppWindow(QMainWindow):
         if self.hotkey_manager and self.config:
             try:
                 # 从配置中获取当前热键设置
-                hide_hotkey = self.config.hide_hotkey
-                show_hotkey = self.config.show_hotkey
-                switch_hotkey = self.config.switch_hotkey
+                hide_hotkey = self.config.hotkey.hide_hotkey
+                show_hotkey = self.config.hotkey.show_hotkey
+                switch_hotkey = self.config.hotkey.switch_hotkey
 
                 # 注册热键回调
                 self.hotkey_manager.register_hide_hotkey(
@@ -358,19 +378,36 @@ class AppWindow(QMainWindow):
 
     def _init_tray(self) -> None:
         """初始化系统托盘"""
-        self.tray_icon = QSystemTrayIcon(self)
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            logger.warning("系统托盘不可用，延迟重试")
+            QTimer.singleShot(UIConstants.TRAY_INIT_RETRY_DELAY, self._init_tray)
+            return
 
-        # 设置托盘图标
+        self._tray_state.icon = QSystemTrayIcon(self)
+
+        icon_loaded = False
         icon_candidates = [get_resource_path(icon) for icon in PathConstants.ICON_CANDIDATES]
 
         for icon_path in icon_candidates:
             if icon_path and os.path.exists(icon_path):
-                self.tray_icon.setIcon(QIcon(icon_path))
-                break
+                qicon = QIcon(icon_path)
+                if not qicon.isNull():
+                    self._tray_state.icon.setIcon(qicon)
+                    icon_loaded = True
+                    logger.debug("托盘图标已加载: %s", icon_path)
+                    break
 
-        self.tray_icon.setToolTip(AppConstants.APP_TITLE)
+        if not icon_loaded:
+            # 使用应用图标作为回退
+            app_icon = self.windowIcon()
+            if not app_icon.isNull():
+                self._tray_state.icon.setIcon(app_icon)
+                logger.warning("候选图标均不可用，使用窗口图标作为托盘图标")
+            else:
+                logger.error("无法加载任何托盘图标，托盘可能无法正常显示")
 
-        # 创建托盘菜单
+        self._tray_state.icon.setToolTip(AppConstants.APP_TITLE)
+
         tray_menu = QMenu()
 
         show_action = QAction("显示主窗口", self)
@@ -383,11 +420,93 @@ class AppWindow(QMainWindow):
         exit_action.triggered.connect(self._on_close)
         tray_menu.addAction(exit_action)
 
-        self.tray_icon.setContextMenu(tray_menu)
-        self.tray_icon.activated.connect(self._on_tray_activated)
-        self.tray_icon.show()
+        self._tray_state.icon.setContextMenu(tray_menu)
+        self._tray_state.icon.activated.connect(self._on_tray_activated)
+        self._tray_state.icon.show()
 
-        logger.info("系统托盘初始化完成")
+        # 验证托盘图标是否真正可见
+        if not self._tray_state.icon.isVisible():
+            logger.warning("托盘图标调用 show() 后仍不可见，尝试延迟重试")
+            QTimer.singleShot(UIConstants.TRAY_VISIBLE_CHECK_DELAY, self._ensure_tray_visible)
+        else:
+            logger.debug("系统托盘初始化完成，图标已可见")
+
+        self._start_tray_heartbeat()
+
+    def _ensure_tray_visible(self) -> None:
+        """确保托盘图标可见（延迟重试）"""
+        if self._tray_state.icon and not self._tray_state.icon.isVisible():
+            self._tray_state.icon.show()
+            if self._tray_state.icon.isVisible():
+                logger.debug("延迟重试后托盘图标已可见")
+            else:
+                logger.warning("托盘图标仍不可见，可能需要重新初始化")
+                self._reinitialize_tray()
+
+    def _start_tray_heartbeat(self) -> None:
+        """启动托盘心跳检测（防止托盘图标假死）"""
+        self._tray_state.heartbeat_timer = QTimer(self)
+        self._tray_state.heartbeat_timer.timeout.connect(self._refresh_tray_icon)
+        self._tray_state.heartbeat_timer.start(UIConstants.TRAY_HEARTBEAT_INTERVAL)
+        self._tray_state.last_interaction = time.time()
+
+    def _refresh_tray_icon(self) -> None:
+        """刷新托盘图标状态（防假死）"""
+        if self._tray_state.icon:
+            try:
+                if not self._tray_state.icon.isVisible():
+                    logger.debug("托盘图标不可见，尝试重新显示")
+                    self._tray_state.icon.show()
+                    if not self._tray_state.icon.isVisible():
+                        self._reinitialize_tray()
+                        return
+
+                current_icon = self._tray_state.icon.icon()
+                if not current_icon.isNull():
+                    self._tray_state.icon.hide()
+                    self._tray_state.icon.setIcon(current_icon)
+                    self._tray_state.icon.show()
+
+                self._check_event_loop_health()
+
+            except Exception as e:
+                logger.debug("托盘图标刷新失败，尝试重新初始化: %s", e)
+                self._reinitialize_tray()
+
+    def _check_event_loop_health(self) -> None:
+        """检查事件循环健康状态"""
+        try:
+            QApplication.processEvents(QEventLoop.AllEvents, 100)
+
+            current_time = time.time()
+            if current_time - self._tray_state.last_interaction > 120:
+                logger.debug("检测到托盘长时间无响应，触发刷新")
+                self._reinitialize_tray()
+                self._tray_state.last_interaction = current_time
+            else:
+                self._tray_state.last_interaction = current_time
+
+        except Exception as e:
+            logger.debug("事件循环健康检查失败: %s", e)
+
+    def _reinitialize_tray(self) -> None:
+        """重新初始化托盘（假死恢复）"""
+        try:
+            # 先停止并清理旧定时器，防止泄漏
+            if self._tray_state.heartbeat_timer:
+                self._tray_state.heartbeat_timer.stop()
+                self._tray_state.heartbeat_timer.deleteLater()
+                self._tray_state.heartbeat_timer = None
+
+            if self._tray_state.icon:
+                self._tray_state.icon.hide()
+                self._tray_state.icon.deleteLater()
+
+            self._init_tray()
+            logger.debug("托盘图标已重新初始化（假死恢复）")
+
+        except Exception as e:
+            logger.error("托盘重新初始化失败: %s", e)
 
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         """托盘图标激活事件
@@ -395,7 +514,9 @@ class AppWindow(QMainWindow):
         Args:
             reason: 激活原因
         """
-        if reason == QSystemTrayIcon.DoubleClick or reason == QSystemTrayIcon.Trigger:
+        self._tray_state.last_interaction = time.time()
+
+        if reason in (QSystemTrayIcon.DoubleClick, QSystemTrayIcon.Trigger):
             if self.isVisible():
                 self.hide()
             else:
@@ -409,9 +530,18 @@ class AppWindow(QMainWindow):
 
     def hide_to_tray(self) -> None:
         """隐藏到托盘"""
+        # 验证托盘图标是否可见，不可见则先尝试修复
+        if not self._tray_state.icon or not self._tray_state.icon.isVisible():
+            logger.warning("托盘图标不可见，尝试重新初始化后再隐藏")
+            self._reinitialize_tray()
+            # 重新初始化后仍不可见，则不隐藏窗口
+            if not self._tray_state.icon or not self._tray_state.icon.isVisible():
+                logger.error("托盘图标不可用，无法隐藏到托盘")
+                return
+
         self.hide()
-        if self.tray_icon:
-            self.tray_icon.showMessage(
+        if self._tray_state.icon:
+            self._tray_state.icon.showMessage(
                 AppConstants.APP_TITLE,
                 "程序已最小化到托盘，点击托盘图标恢复窗口",
                 QSystemTrayIcon.Information,
@@ -445,6 +575,12 @@ class AppWindow(QMainWindow):
         if self.window_manager:
             self.window_manager.stop()
 
+        # 保存窗口尺寸到配置
+        if self.config and hasattr(self.config, "ui") and isinstance(self.config.ui, dict):
+            self.config.ui["width"] = self.width()
+            self.config.ui["height"] = self.height()
+            logger.info(f"已保存窗口尺寸: {self.width()}x{self.height()}")
+
         # 保存配置
         if self.config_manager:
             # 退出时强制落盘，避免防抖保存还未触发导致配置丢失
@@ -459,9 +595,8 @@ class AppWindow(QMainWindow):
                 if hasattr(self.config_manager, "close"):
                     self.config_manager.close()
 
-        # 隐藏托盘图标
-        if self.tray_icon:
-            self.tray_icon.hide()
+        if self._tray_state.icon:
+            self._tray_state.icon.hide()
 
         # 退出应用
         QApplication.quit()
@@ -492,13 +627,19 @@ class AppWindow(QMainWindow):
             def emit(self, record):
                 try:
                     msg = self.format(record)
-                    self.log_queue.put(msg)
+                    self.log_queue.put_nowait(msg)
+                except Full:
+                    # 队列满时丢弃最旧的一条日志，再写入新日志
+                    try:
+                        self.log_queue.get_nowait()
+                        self.log_queue.put_nowait(msg)
+                    except Exception:
+                        pass
                 except Exception:
-                    # 格式化或队列操作失败时，使用标准错误处理
                     self.handleError(record)
 
         # 创建并添加日志处理器
-        log_handler = QtLogHandler(self._log_queue)
+        log_handler = QtLogHandler(self._log_state.queue)
         log_handler.setFormatter(
             logging.Formatter(
                 "%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
@@ -519,7 +660,7 @@ class AppWindow(QMainWindow):
         try:
             for _ in range(MAX_BATCH):
                 try:
-                    msg = self._log_queue.get_nowait()
+                    msg = self._log_state.queue.get_nowait()
                     self.log_updated.emit(msg)
                 except Empty:
                     break
@@ -589,12 +730,12 @@ class AppWindow(QMainWindow):
         """判断是否应该记录时间调整日志"""
         if self._get_ntp_log_enabled():
             return True
-        # 仅当偏移量 >= 1000ms 时才记录
+        # 仅当偏移量 >= 阈值时才记录
         import re
         match = re.search(r"系统时间已调整：([\d.]+)ms", message)
         if match:
             offset_ms = float(match.group(1))
-            if abs(offset_ms) >= 1000:
+            if abs(offset_ms) >= TimeThresholdConstants.LOG_TIME_OFFSET_THRESHOLD_MS:
                 return True
         return False
 
@@ -602,12 +743,12 @@ class AppWindow(QMainWindow):
         """判断是否应该记录时间差日志"""
         if self._get_ntp_log_enabled():
             return True
-        # 仅当偏移量 >= 1000ms 时才记录
+        # 仅当偏移量 >= 阈值时才记录
         import re
         match = re.search(r"时间差：([\d.]+) 毫秒", message)
         if match:
             offset_ms = float(match.group(1))
-            if abs(offset_ms) >= 1000:
+            if abs(offset_ms) >= TimeThresholdConstants.LOG_TIME_OFFSET_THRESHOLD_MS:
                 return True
         return False
 
@@ -617,7 +758,11 @@ class AppWindow(QMainWindow):
 
     def _is_window_refresh_log(self, message: str) -> bool:
         """判断是否为窗口刷新相关日志"""
-        return any(keyword in message for keyword in ["已刷新", "刷新窗口", "窗口列表"])
+        return any(keyword in message for keyword in [
+            "已刷新", "刷新窗口", "窗口列表",
+            "指定进程扫描", "目标 PID", "发现 个窗口",
+            "窗口: hwnd=", "PID=", "进程=", "状态=可见", "状态=隐藏"
+        ])
 
     def _is_window_operation_log(self, message: str) -> bool:
         """判断是否为窗口操作相关日志"""

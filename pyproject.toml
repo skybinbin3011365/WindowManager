@@ -1,48 +1,63 @@
+# ============================================================
+#  WindowManager - 项目配置文件
+#  打包工具：Nuitka 4.1.1（standalone 模式 + MSVC 编译器）
+#  Python：3.12   平台：Windows only
+# ============================================================
+
 [project]
-name = "windowmanager"
+name = "WinHide"
 version = "2.0.0"
 description = "Windows 窗口管理器 - 支持窗口隐藏、热键管理、时间校准"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 license = {text = "MIT"}
 authors = [
     {name = "Stephen Zhao", email = "your.email@example.com"}
 ]
-keywords = ["window", "manager", "hotkey", "windows", "pyside6"]
+keywords = ["window", "manager", "hotkey", "windows", "pyside6", "nuitka"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: End Users/Desktop",
     "License :: OSI Approved :: MIT License",
     "Operating System :: Microsoft :: Windows",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Desktop Environment",
 ]
 
+# ── 运行时依赖（与 requirements.txt 保持一致）─────────────────────
 dependencies = [
-    "PySide6>=6.10.0",
+    "PySide6>=6.11.0",
     "psutil>=7.0.0",
     "pywin32>=311",
     "pynput>=1.7.6",
 ]
 
+# ── 可选依赖组 ────────────────────────────────────────────────────
 [project.optional-dependencies]
+
+# 打包依赖：生成发行版 exe
+pack = [
+    "nuitka>=4.1.1",
+    "ordered-set>=4.1.0",   # Nuitka 依赖，加速增量编译
+    "zstandard>=0.21.0",    # Nuitka 可选：压缩 onefile 包体（standalone 可不用）
+]
+
+# 开发工具
 dev = [
-    "pyinstaller>=6.0.0",
-    "pytest>=7.0.0",
-    "black>=23.0.0",
+    "nuitka>=4.1.1",
+    "ordered-set>=4.1.0",
+    "pytest>=8.0.0",
+    "black>=26.0.0",
     "flake8>=7.0.0",
-    "pylint>=3.0.0",
-    "ruff>=0.6.0",
-    "mypy>=1.11.0",
+    "ruff>=0.15.0",
+    "mypy>=1.19.0",
 ]
 
 [project.scripts]
-winhide = "src.app:main"
+winhide = "app:main"
 
+# ── 构建后端 ──────────────────────────────────────────────────────
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
@@ -51,52 +66,151 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"*" = ["*.json", "*.png"]
+"*" = ["*.json", "*.png", "*.ico"]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
+# ═══════════════════════════════════════════════════════════════
+#  Nuitka 全自动打包配置
+#  运行方式（在项目根目录）：
+#    python -m nuitka @nuitka_build_args.txt src/app.py
+#  或直接使用下方 [tool.nuitka] 节（若 IDE / CI 工具支持读取）
+# ═══════════════════════════════════════════════════════════════
+[tool.nuitka]
 
+# ── 编译模式 ──────────────────────────────────────────────────
+# standalone：生成可在无 Python 环境机器运行的独立目录
+mode = "standalone"
+
+# ── 编译器选择 ────────────────────────────────────────────────
+# 使用 MSVC 2022（Visual Studio Community 已安装，优先于 MinGW）
+# 注意：不加 --mingw64，让 Nuitka 自动检测 MSVC cl.exe
+# msvc = "14.3"    # 可取消注释以强制指定 MSVC 版本
+
+# ── 入口文件 ──────────────────────────────────────────────────
+# 由命令行传入 src/app.py，此处不重复设置
+
+# ── 输出目录 ──────────────────────────────────────────────────
+output-dir = "dist_nuitka"
+
+# ── 窗口 / 图标 ───────────────────────────────────────────────
+windows-console-mode = "disable"          # 禁用控制台（GUI 程序）
+windows-icon-from-ico = "assets/WinHide2.ico"
+
+# ── Python 运行时标志 ─────────────────────────────────────────
+# 强制 UTF-8 模式：等效于 PYTHONUTF8=1 或 python -X utf8
+# 解决 Windows 中文环境下文件读写、日志输出的编码问题
+python-flag = "-Xutf8"
+
+# ── UAC 权限请求 ──────────────────────────────────────────────
+windows-uac-admin = true                  # 请求管理员权限（窗口操作必须）
+
+# ── PySide6 插件（必须！）────────────────────────────────────
+# 启用官方 PySide6/Qt6 插件：自动收集 Qt 动态库、QML、翻译文件
+enable-plugins = ["pyside6"]
+
+# ── 强制包含（Nuitka 静态分析可能遗漏的包）───────────────────
+# pynput：使用 ctypes 动态加载，Nuitka 无法自动追踪
+include-package = [
+    "pynput",
+    "pynput.keyboard",
+    "pynput.mouse",
+]
+
+# pywin32：部分子模块通过字符串动态导入，需显式包含
+include-package += [
+    "win32api",
+    "win32con",
+    "win32gui",
+    "win32process",
+    "win32security",
+    "winerror",
+    "pywintypes",
+    "pythoncom",
+    "win32com",
+    "win32com.client",
+]
+
+# psutil 内部有 C 扩展按需加载
+include-package += ["psutil"]
+
+# ── 数据文件收集 ─────────────────────────────────────────────
+# config.json 放在 exe 同目录
+include-data-files = [
+    "config.json:./"
+]
+# assets 目录（图标、图片）整体复制
+include-data-dir = [
+    "assets:./assets"
+]
+
+# ── 编译优化 ──────────────────────────────────────────────────
+# lto = "yes"          # 链接时优化（编译更慢但产物更小，可选）
+# jobs = 4             # 并发编译 CPU 核心数（默认自动）
+
+# ── 产物文件名 ────────────────────────────────────────────────
+output-filename = "WinHide"
+
+# ── 调试 / 日志（发布前关闭）─────────────────────────────────
+# show-progress = true
+# show-memory = true
+
+# ═══════════════════════════════════════════════════════════════
+#  Nuitka 一键打包命令行参数文件（建议配合 @nuitka_build_args.txt）
+#  详见项目根目录 nuitka_build_args.txt
+# ═══════════════════════════════════════════════════════════════
+
+
+# ── 代码格式化：black ─────────────────────────────────────────
 [tool.black]
 line-length = 100
-target-version = ["py39", "py310", "py311", "py312"]
+target-version = ["py312"]
 include = '\.pyi?$'
 exclude = '''
 /(
     \.git
   | \.venv
+  | venv_test
   | build
   | dist
+  | dist_nuitka
   | __pycache__
+  | backup
 )/
 '''
 
+# ── 代码检查：ruff（替代 flake8，速度更快）───────────────────
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = [
+    ".git", "__pycache__", "build", "dist", "dist_nuitka",
+    ".venv", "venv_test", "backup",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E203", "W503", "E501"]
+
+# ── 代码检查：flake8（保留兼容性）────────────────────────────
 [tool.flake8]
 max-line-length = 100
 exclude = [
-    ".git",
-    "__pycache__",
-    "build",
-    "dist",
-    ".venv",
+    ".git", "__pycache__", "build", "dist", "dist_nuitka",
+    ".venv", "venv_test", "backup",
 ]
 ignore = ["E203", "W503"]
 
-[tool.pylint.messages_control]
-max-line-length = 100
-disable = [
-    "missing-docstring",
-    "too-few-public-methods",
-    "too-many-arguments",
-    "too-many-instance-attributes",
-]
+# ── 类型检查：mypy ────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true   # pywin32/pynput 无类型存根
+exclude = ["backup/", "dist/", "dist_nuitka/", "venv_test/"]
 
-[tool.pyinstaller]
-# PyInstaller 配置文件映射
-# 统一打包配置文件: WinHide.spec
-# 使用方法：
-# - 生产环境打包（无控制台）: pyinstaller WinHide.spec
-# - 开发/调试环境打包（带控制台）: pyinstaller WinHide.spec --console
-specfile = "WinHide.spec"
+# ── 测试：pytest ──────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
