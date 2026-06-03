@@ -60,7 +60,7 @@ WinHide.exe 所在目录/config.json
   "hide_hotkey": "MBUTTON+RBUTTON",
   "show_hotkey": "SHIFT+RBUTTON",
   "switch_hotkey": "CTRL+RBUTTON",
-  "keywords": ["读书巴士", "book"],
+  "keywords": ["读书", "book"],
   "process_whitelist": ["book.exe"],
   "switch_processes": ["book.exe"],
   "auto_start": false,
